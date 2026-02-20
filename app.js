@@ -5,48 +5,48 @@ var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const http = require('http');
 
+require('dotenv').config();
 const { connectToMongoDB } = require('./config/db');
+
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users.routes');
-var osRouter = require('./routes/os.routes');
-var factureRouter = require('./routes/facture.routes');
-
-
-require('dotenv').config();
-
+var signalementsRouter = require('./routes/signalements.routes');
+var categoriesRouter = require('./routes/categories.routes');
+var notificationsRouter = require('./routes/notifications.routes');
+var analyseAIRouter = require('./routes/analyseAI.routes');
 
 var app = express();
 
-
-
+/* Middlewares */
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
+/* Routes */
 app.use('/index', indexRouter);
 app.use('/users', usersRouter);
-app.use('/os', osRouter);
-app.use('/facture', factureRouter);
+app.use('/signalements', signalementsRouter);
+app.use('/categories', categoriesRouter);
+app.use('/notifications', notificationsRouter);
+app.use('/analyseAI', analyseAIRouter);
 
-// catch 404 and forward to error handler
+/* Catch 404 */
 app.use(function(req, res, next) {
   next(createError(404));
 });
 
-// error handler
+/* Error handler */
 app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
-
-  // render the error page
   res.status(err.status || 500);
-  res.json('error');
+  res.json({
+    message: err.message,
+    error: req.app.get('env') === 'development' ? err : {}
+  });
 });
 
-//2
+/* Server */
 const server = http.createServer(app);
 
 server.listen(process.env.PORT, () => {

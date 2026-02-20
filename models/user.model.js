@@ -1,46 +1,14 @@
-const mongoose = require("mongoose");
-const bcrypt = require("bcrypt")
-const userSchema = new mongoose.Schema(
-    {
+const mongoose = require('mongoose');
 
-        name: { type: String, required: true },
-        email: {
-            type: String,
-            required: [true, "Email is required"],
-            unique: true,
-            lowercase: true,
-            match: [
-
-                /^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/,
-                "Please enter a valid email address"
-            ]
-
-        },
-        password: { type: String, required: true },
-        age: { type: Number, min: 10, max: 100 },
-        role: { type: String, enum: ["admin", "user"], default: "user" },
-        address: {
-            city: String,
-            street: String,
-            postalCode: String,
-
-        }
-
-    },
-    { timestamps: true });
-
-userSchema.pre("save", async function (next) {
-    try {
-
-        const salt = await bcrypt.fenSalt();
-        const user = this
-        user.password = await bcrypt.hash(this.password, salt);
-        next();
-    } catch (error) {
-        next(error);
+const userSchema = new mongoose.Schema({
+    nom: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    motDePasse: { type: String, required: true },
+    role: {
+        type: String,
+        enum: ['CITOYEN', 'AGENT_MUNICIPAL', 'ADMIN'],
+        required: true
     }
+}, { timestamps: true });
 
-});
-
- module.exports = mongoose.model("User", userSchema);
- 
+module.exports = mongoose.model('Utilisateur', userSchema);
