@@ -9,6 +9,10 @@ router.get('/GetUserById/:id', userController.getUserById);
 
 router.post('/CreateUser', userController.createUser);
 
+router.post("/CreateUserAgentMunicipal", userController.createUserAgentMunicipal);
+
+
+
 router.put('/UpdateUser/:id', userController.updateUser);
 
 router.delete('/DeleteUser/:id', userController.deleteUser);
