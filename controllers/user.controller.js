@@ -6,16 +6,12 @@ module.exports.createUser = async (req, res) => {
     const { nom, email, tel, location, motDePasse, role } = req.body;
 
     if (!nom || !email || !tel || !location || !motDePasse || !role) {
-      return res.status(400).json({
-        message: "All fields are required"
-      });
+      return res.status(400).json({ message: "All fields are required" });
     }
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(409).json({
-        message: "Email already exists"
-      });
+      return res.status(409).json({ message: "Email already exists" });
     }
 
     const newUser = new User({
@@ -23,7 +19,7 @@ module.exports.createUser = async (req, res) => {
       email,
       tel,
       location,
-      motDePasse, // hashed automatically by model
+      motDePasse,
       role
     });
 
@@ -34,24 +30,28 @@ module.exports.createUser = async (req, res) => {
       data: newUser
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
 /* CREATE USER WITH IMAGE */
 module.exports.createUserWithImage = async (req, res) => {
   try {
-    const { name, email, password, tel, location } = req.body;
+    const { nom, email, tel, location, motDePasse, role } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({ message: "Image is required" });
+    }
+
     const user_image = req.file.filename;
 
-    const newUser = new userModel({
-      name,
+    const newUser = new User({
+      nom,
       email,
-      password,
       tel,
       location,
+      motDePasse,
+      role,
       user_image
     });
 
@@ -62,19 +62,21 @@ module.exports.createUserWithImage = async (req, res) => {
       data: newUser
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
+};
 
-  /*create user_admin*/
-  module.exports.createUserAdmin = async (req, res) => {
+/* CREATE ADMIN */
+module.exports.createUserAdmin = async (req, res) => {
   try {
-    const { name, email, code_Admin } = req.body;
+    const { nom, email, tel, location, motDePasse, code_Admin } = req.body;
 
-    const newUser = new userModel({
-      name,
+    const newUser = new User({
+      nom,
       email,
+      tel,
+      location,
+      motDePasse,
       role: "ADMIN",
       code_Admin
     });
@@ -86,21 +88,21 @@ module.exports.createUserWithImage = async (req, res) => {
       data: newUser
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 };
-};
 
-/*create user_agentmunicipal*/
- module.exports.createUserAgentMunicipal = async (req, res) => {
+/* CREATE AGENT MUNICIPAL */
+module.exports.createUserAgentMunicipal = async (req, res) => {
   try {
-    const { name, email, code_Agent } = req.body;
+    const { nom, email, tel, location, motDePasse, code_Agent } = req.body;
 
-    const newUser = new userModel({
-      name,
+    const newUser = new User({
+      nom,
       email,
+      tel,
+      location,
+      motDePasse,
       role: "AGENT_MUNICIPAL",
       code_Agent
     });
@@ -108,27 +110,19 @@ module.exports.createUserWithImage = async (req, res) => {
     await newUser.save();
 
     res.status(201).json({
-      message: "AGENT MUNICIPAL created successfully",
+      message: "Agent Municipal created successfully",
       data: newUser
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 };
-
-
-
 
 /* GET ALL USERS */
 module.exports.getAllUsers = async (req, res) => {
   try {
     const users = await User.find();
-    res.status(200).json({
-      message: "Users retrieved successfully",
-      data: users
-    });
+    res.status(200).json({ data: users });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -138,13 +132,8 @@ module.exports.getAllUsers = async (req, res) => {
 module.exports.getUserById = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    res.status(200).json({
-      message: "User retrieved successfully",
-      data: user
-    });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.status(200).json({ data: user });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -158,10 +147,7 @@ module.exports.updateUser = async (req, res) => {
       req.body,
       { new: true }
     );
-    res.status(200).json({
-      message: "User updated successfully",
-      data: updatedUser
-    });
+    res.status(200).json({ data: updatedUser });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -171,9 +157,7 @@ module.exports.updateUser = async (req, res) => {
 module.exports.deleteUser = async (req, res) => {
   try {
     await User.findByIdAndDelete(req.params.id);
-    res.status(200).json({
-      message: "User deleted successfully"
-    });
+    res.status(200).json({ message: "User deleted successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
