@@ -4,7 +4,7 @@ var router = express.Router();
 const userController = require("../controllers/user.controller");
 const upload = require("../middlewares/uploadfile");
 const logMiddleware = require("../middlewares/LogMiddleware");
-
+const { requireAuth } = require("../middlewares/authMiddleware");
 // ✅ Appliquer le middleware de log sur toutes les routes
 router.use(logMiddleware);
 
@@ -28,6 +28,9 @@ router.put("/UpdateUser/:id", userController.updateUser);
 
 router.delete("/DeleteUser/:id", userController.deleteUser);
 
+router.post('/login', userController.login);
+
+router.post('/logout',requireAuth, userController.logout);
 /* ============================
    AGENT MUNICIPAL ROUTES
 ============================ */

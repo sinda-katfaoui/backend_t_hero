@@ -21,6 +21,9 @@ exports.getAnalyseBySignalement = async (req, res) => {
 
         if (!analyse) {
             return res.status(404).json({ message: 'Analyse non trouvée' });
+
+
+            
         }
 
         res.status(200).json(analyse);

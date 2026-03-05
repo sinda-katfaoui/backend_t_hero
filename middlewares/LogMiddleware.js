@@ -18,7 +18,7 @@ function appendLog(req, res, startTime) {
     const logsDirectory = path.join(__dirname, "logs");
     const logFilePath = path.join(logsDirectory, "doc.log");
 
-    // 🚫 DO NOT create folder or file
+    
     if (!fs.existsSync(logsDirectory) || !fs.existsSync(logFilePath)) {
         console.warn("Log file or directory missing. Logging skipped.");
         return;

@@ -7,7 +7,7 @@ const notificationSchema = new mongoose.Schema({
 
     destinataire: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Utilisateur'
+        ref: 'User'
     },
 
     signalement: {

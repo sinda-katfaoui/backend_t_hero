@@ -17,7 +17,7 @@ const signalementSchema = new mongoose.Schema({
 
     citoyen: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Utilisateur',
+        ref: 'User',
         required: true
     },
 
@@ -28,7 +28,7 @@ const signalementSchema = new mongoose.Schema({
 
     agent: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Utilisateur'
+        ref: 'User'
     }
 });
 

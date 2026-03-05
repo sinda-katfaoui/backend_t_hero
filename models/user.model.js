@@ -39,5 +39,30 @@ userSchema.pre("save", async function (next) {
     throw err;
   }
 });
+userSchema.statics.login = async function (email, password) {
+  try {
+    const user = await this.findOne({ email });
 
-module.exports = mongoose.model("Utilisateur", userSchema);
+    if (!user) {
+      throw new Error("Incorrect email");
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      throw new Error("Incorrect password");
+    }
+
+    if (user.block === true) {
+      throw new Error("User is blocked");
+    }
+
+    return user;
+
+  } catch (err) {
+    throw err;
+  }
+};
+
+
+module.exports = mongoose.model("User", userSchema);
