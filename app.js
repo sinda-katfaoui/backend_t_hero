@@ -8,7 +8,7 @@ const http = require('http');
 require('dotenv').config();
 const { connectToMongoDB } = require('./config/db');
 
-var indexRouter = require('./routes/index');
+
 var usersRouter = require('./routes/users.routes');
 var signalementsRouter = require('./routes/signalements.routes');
 var categoriesRouter = require('./routes/categories.routes');
@@ -25,7 +25,7 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* Routes */
-app.use('/index', indexRouter);
+
 app.use('/users', usersRouter);
 app.use('/signalements', signalementsRouter);
 app.use('/categories', categoriesRouter);
@@ -33,12 +33,12 @@ app.use('/notifications', notificationsRouter);
 app.use('/analyseAI', analyseAIRouter);
 
 /* Catch 404 */
-app.use(function(req, res, next) {
+app.use(function (req, res, next) {
   next(createError(404));
 });
 
 /* Error handler */
-app.use(function(err, req, res, next) {
+app.use(function (err, req, res, next) {
   res.status(err.status || 500);
   res.json({
     message: err.message,

@@ -1,16 +1,32 @@
-var express = require('express');
-var router = express.Router();
-const categorieController = require('../controllers/categorie.controller');
+const express              = require('express');
+const router               = express.Router();
+const logMiddleware        = require('../middlewares/LogMiddleware');
+const { requireAuth }      = require('../middlewares/authMiddleware');
+const categorieController  = require('../controllers/categorie.controller');
 
-/* CATEGORIES */
-router.post('/CreateCategorie', categorieController.createCategorie);
+router.use(logMiddleware);
 
-router.get('/GetAllCategories', categorieController.getAllCategories);
+/* ── Read — public, Flutter needs these to show category list ── */
+router.get('/GetAllCategories',                   categorieController.getAllCategories);
+router.get('/GetCategorieById/:id',               categorieController.getCategorieById);
 
-router.get('/GetCategorieById/:id', categorieController.getCategorieById);
+/* ── Relation: contient — get signalements inside a category ── */
+router.get('/GetSignalementsByCategorie/:id',     categorieController.getSignalementsByCategorie);
 
-router.put('/UpdateCategorie/:id', categorieController.updateCategorie);
+/* ── Write — protected, only Admin should manage categories ── */
+router.post('/CreateCategorie',
+  requireAuth,
+  categorieController.createCategorie
+);
 
-router.delete('/DeleteCategorie/:id', categorieController.deleteCategorie);
+router.put('/UpdateCategorie/:id',
+  requireAuth,
+  categorieController.updateCategorie
+);
+
+router.delete('/DeleteCategorie/:id',
+  requireAuth,
+  categorieController.deleteCategorie
+);
 
 module.exports = router;

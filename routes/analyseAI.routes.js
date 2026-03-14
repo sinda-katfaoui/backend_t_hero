@@ -1,10 +1,38 @@
-var express = require('express');
-var router = express.Router();
+const express             = require('express');
+const router              = express.Router();
+const logMiddleware       = require('../middlewares/LogMiddleware');
+const { requireAuth }     = require('../middlewares/authMiddleware');
 const analyseAIController = require('../controllers/analyseAI.controller');
 
-/* ANALYSE IA */
-router.post('/AnalyserSignalement', analyseAIController.analyserSignalement);
+router.use(logMiddleware);
 
-router.get('/GetAnalyseBySignalement/:signalementId', analyseAIController.getAnalyseBySignalement);
+/* ── analyserTexte() — from diagram ── */
+router.post('/AnalyserTexte/:signalementId',
+  requireAuth,
+  analyseAIController.analyserTexte
+);
+
+/* ── analyserImage() — from diagram ── */
+router.post('/AnalyserImage/:signalementId',
+  requireAuth,
+  analyseAIController.analyserImage
+);
+
+/* ── Get analysis by signalement ── */
+router.get('/GetAnalyseBySignalement/:signalementId',
+  analyseAIController.getAnalyseBySignalement
+);
+
+/* ── Get all analyses — Admin dashboard ── */
+router.get('/GetAllAnalyses',
+  requireAuth,
+  analyseAIController.getAllAnalyses
+);
+
+/* ── Delete analysis ── */
+router.delete('/DeleteAnalyse/:id',
+  requireAuth,
+  analyseAIController.deleteAnalyse
+);
 
 module.exports = router;

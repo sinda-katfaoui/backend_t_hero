@@ -1,33 +1,40 @@
-const jwt = require("jsonwebtoken");
+const jwt       = require("jsonwebtoken");
 const userModel = require("../models/user.model");
+
+const SECRET_KEY = process.env.JWT_SECRET || "mySecretKey";
 
 const requireAuth = async (req, res, next) => {
   try {
-    const token = req.cookies.jwt;
+    // Read token from Authorization header: "Bearer <token>"
+    const authHeader = req.headers.authorization;
 
-    if (!token) {
-      return res.status(401).json({ error: "Unauthorized: No token" });
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized: No token provided" });
     }
 
-    jwt.verify(token,"mySecretKey", async (err, decodedToken) => {
+    const token = authHeader.split(" ")[1];
+
+    jwt.verify(token, SECRET_KEY, async (err, decodedToken) => {
       if (err) {
         return res.status(401).json({ error: "Unauthorized: Invalid token" });
-      } else {
-        const user = await userModel.findById(decodedToken.id);
-
-        if (!user) {
-          return res.status(401).json({ error: "Unauthorized: User not found" });
-        }
-
-        req.user = user; // Attach user to request
-        next();
       }
+
+      const user = await userModel.findById(decodedToken.id).select("-motDePasse");
+
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized: User not found" });
+      }
+
+      if (user.isBlocked) {
+        return res.status(403).json({ error: "Forbidden: Account is blocked" });
+      }
+
+      req.user = user;
+      next();
     });
 
   } catch (err) {
-    return res.status(401).json({
-      error: "Unauthorized: Invalid token"
-    });
+    return res.status(401).json({ error: "Unauthorized: Invalid token" });
   }
 };
 

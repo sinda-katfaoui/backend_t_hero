@@ -3,66 +3,50 @@ const bcrypt = require("bcrypt");
 
 const userSchema = new mongoose.Schema(
   {
-    nom: { type: String, required: true },
-
-    email: { type: String, required: true, unique: true },
-
+    nom:        { type: String, required: true },
+    email:      { type: String, required: true, unique: true },
     motDePasse: { type: String, required: true },
-
-    tel: { type: String, required: true },
-
-    location: { type: String, required: true },
-
-    user_image: { type: String, default: "" },
-
     role: {
       type: String,
       enum: ["CITOYEN", "AGENT_MUNICIPAL", "ADMIN"],
       required: true
     },
-    //champs role AGENT_MUNICIPAL
-    code_Agent:Number,
+    user_image: { type: String, default: "" },
 
-    //champs role ADMIN
-    code_Admin:Number
+    // AGENT_MUNICIPAL only
+    code_Agent: { type: Number },
 
+    // ADMIN only
+    code_Admin: { type: Number },
+
+    isBlocked:  { type: Boolean, default: false }
   },
   { timestamps: true }
 );
 
+// Only hash if password was modified
 userSchema.pre("save", async function (next) {
+  if (!this.isModified("motDePasse")) return next();
   try {
     const salt = await bcrypt.genSalt(10);
     this.motDePasse = await bcrypt.hash(this.motDePasse, salt);
     next();
   } catch (err) {
-    throw err;
+    next(err);
   }
 });
+
+// seConnecter() from diagram
 userSchema.statics.login = async function (email, password) {
-  try {
-    const user = await this.findOne({ email });
+  const user = await this.findOne({ email });
+  if (!user) throw new Error("Email incorrect");
 
-    if (!user) {
-      throw new Error("Incorrect email");
-    }
+  const isMatch = await bcrypt.compare(password, user.motDePasse);
+  if (!isMatch) throw new Error("Mot de passe incorrect");
 
-    const isMatch = await bcrypt.compare(password, user.password);
+  if (user.isBlocked) throw new Error("Compte bloqué");
 
-    if (!isMatch) {
-      throw new Error("Incorrect password");
-    }
-
-    if (user.block === true) {
-      throw new Error("User is blocked");
-    }
-
-    return user;
-
-  } catch (err) {
-    throw err;
-  }
+  return user;
 };
-
 
 module.exports = mongoose.model("User", userSchema);
