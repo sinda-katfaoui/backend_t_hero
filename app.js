@@ -1,4 +1,3 @@
-var createError = require('http-errors');
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
@@ -7,7 +6,6 @@ const http = require('http');
 
 require('dotenv').config();
 const { connectToMongoDB } = require('./config/db');
-
 
 var usersRouter = require('./routes/users.routes');
 var signalementsRouter = require('./routes/signalements.routes');
@@ -25,7 +23,6 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* Routes */
-
 app.use('/users', usersRouter);
 app.use('/signalements', signalementsRouter);
 app.use('/categories', categoriesRouter);
@@ -33,14 +30,13 @@ app.use('/notifications', notificationsRouter);
 app.use('/analyseAI', analyseAIRouter);
 
 /* Catch 404 */
-app.use(function (req, res, next) {
-  next(createError(404));
+app.use(function (req, res) {
+  res.status(404).json({ message: "Route not found" });
 });
 
 /* Error handler */
 app.use(function (err, req, res, next) {
-  res.status(err.status || 500);
-  res.json({
+  res.status(err.status || 500).json({
     message: err.message,
     error: req.app.get('env') === 'development' ? err : {}
   });

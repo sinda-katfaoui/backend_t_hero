@@ -24,16 +24,11 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Only hash if password was modified
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("motDePasse")) return next();
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.motDePasse = await bcrypt.hash(this.motDePasse, salt);
-    next();
-  } catch (err) {
-    next(err);
-  }
+// Fixed: async pre hooks in Mongoose 6+ don't use next()
+userSchema.pre("save", async function () {
+  if (!this.isModified("motDePasse")) return;
+  const salt = await bcrypt.genSalt(10);
+  this.motDePasse = await bcrypt.hash(this.motDePasse, salt);
 });
 
 // seConnecter() from diagram
