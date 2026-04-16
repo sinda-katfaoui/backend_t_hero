@@ -36,14 +36,13 @@ module.exports.login = async (req, res) => {
 /* ── seDeconnecter() ── */
 module.exports.logout = async (req, res) => {
   try {
-    // JWT is stateless — client deletes token on their side
     res.status(200).json({ message: "Déconnexion réussie" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-/* ── gererUtilisateurs() — CREATE CITOYEN ── */
+/* ── CREATE CITOYEN ── */
 module.exports.createUser = async (req, res) => {
   try {
     const { nom, email, motDePasse } = req.body;
@@ -134,7 +133,7 @@ module.exports.createUserAgentMunicipal = async (req, res) => {
   }
 };
 
-/* ── consulterStatistiques() — GET ALL USERS ── */
+/* ── GET ALL USERS ── */
 module.exports.getAllUsers = async (req, res) => {
   try {
     const users = await User.find().select("-motDePasse");
@@ -155,10 +154,9 @@ module.exports.getUserById = async (req, res) => {
   }
 };
 
-/* ── gererUtilisateurs() — UPDATE USER ── */
+/* ── UPDATE USER ── */
 module.exports.updateUser = async (req, res) => {
   try {
-    // Block direct role and password updates
     const { motDePasse, role, ...allowedUpdates } = req.body;
 
     const user = await User.findById(req.params.id);
@@ -176,7 +174,7 @@ module.exports.updateUser = async (req, res) => {
   }
 };
 
-/* ── gererUtilisateurs() — DELETE USER ── */
+/* ── DELETE USER ── */
 module.exports.deleteUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
