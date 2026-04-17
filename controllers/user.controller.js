@@ -8,7 +8,7 @@ const createToken = (userId) => {
   return jwt.sign({ id: userId }, SECRET_KEY, { expiresIn: TOKEN_EXPIRY });
 };
 
-/* ── seConnecter() ── */
+/* ── login() ── */
 module.exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -33,7 +33,7 @@ module.exports.login = async (req, res) => {
   }
 };
 
-/* ── seDeconnecter() ── */
+/* ── logout() ── */
 module.exports.logout = async (req, res) => {
   try {
     res.status(200).json({ message: "Déconnexion réussie" });
@@ -42,7 +42,7 @@ module.exports.logout = async (req, res) => {
   }
 };
 
-/* ── CREATE CITOYEN ── */
+/* ── createUser() ── */
 module.exports.createUser = async (req, res) => {
   try {
     const { nom, email, motDePasse } = req.body;
@@ -63,7 +63,7 @@ module.exports.createUser = async (req, res) => {
   }
 };
 
-/* ── CREATE CITOYEN WITH IMAGE ── */
+/* ── createUserWithImage() ── */
 module.exports.createUserWithImage = async (req, res) => {
   try {
     const { nom, email, motDePasse } = req.body;
@@ -91,7 +91,7 @@ module.exports.createUserWithImage = async (req, res) => {
   }
 };
 
-/* ── CREATE ADMIN ── */
+/* ── createUserAdmin() ── */
 module.exports.createUserAdmin = async (req, res) => {
   try {
     const { nom, email, motDePasse, code_Admin } = req.body;
@@ -112,7 +112,7 @@ module.exports.createUserAdmin = async (req, res) => {
   }
 };
 
-/* ── CREATE AGENT MUNICIPAL ── */
+/* ── createUserAgentMunicipal() ── */
 module.exports.createUserAgentMunicipal = async (req, res) => {
   try {
     const { nom, email, motDePasse, code_Agent } = req.body;
@@ -133,7 +133,7 @@ module.exports.createUserAgentMunicipal = async (req, res) => {
   }
 };
 
-/* ── GET ALL USERS ── */
+/* ── getAllUsers() ── */
 module.exports.getAllUsers = async (req, res) => {
   try {
     const users = await User.find().select("-motDePasse");
@@ -143,24 +143,27 @@ module.exports.getAllUsers = async (req, res) => {
   }
 };
 
-/* ── GET USER BY ID ── */
+/* ── getUserById() ── */
 module.exports.getUserById = async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select("-motDePasse");
-    if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
+    if (!user)
+      return res.status(404).json({ message: "Utilisateur non trouvé" });
     res.status(200).json({ data: user });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-/* ── UPDATE USER ── */
+/* ── updateUser() ── */
 module.exports.updateUser = async (req, res) => {
   try {
+    // Strip password and role — use changePassword for password
     const { motDePasse, role, ...allowedUpdates } = req.body;
 
     const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
+    if (!user)
+      return res.status(404).json({ message: "Utilisateur non trouvé" });
 
     const updated = await User.findByIdAndUpdate(
       req.params.id,
@@ -174,11 +177,33 @@ module.exports.updateUser = async (req, res) => {
   }
 };
 
-/* ── DELETE USER ── */
+/* ── changePassword() ── */
+module.exports.changePassword = async (req, res) => {
+  try {
+    const { motDePasse } = req.body;
+    if (!motDePasse)
+      return res.status(400).json({ message: "Mot de passe requis" });
+
+    const user = await User.findById(req.params.id);
+    if (!user)
+      return res.status(404).json({ message: "Utilisateur non trouvé" });
+
+    // Assign then save — pre-save hook hashes it
+    user.motDePasse = motDePasse;
+    await user.save();
+
+    res.status(200).json({ message: "Mot de passe mis à jour avec succès" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/* ── deleteUser() ── */
 module.exports.deleteUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
+    if (!user)
+      return res.status(404).json({ message: "Utilisateur non trouvé" });
 
     await User.findByIdAndDelete(req.params.id);
     res.status(200).json({ message: "Utilisateur supprimé avec succès" });
