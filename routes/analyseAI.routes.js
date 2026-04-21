@@ -6,13 +6,19 @@ const analyseAIController = require('../controllers/analyseAI.controller');
 
 router.use(logMiddleware);
 
+/* ── NEW: Direct Base64 image analysis from Flutter ── */
+router.post('/analyze',
+  requireAuth,
+  analyseAIController.analyzeSignalement
+);
+
 /* ── analyserTexte() — from diagram ── */
 router.post('/AnalyserTexte/:signalementId',
   requireAuth,
   analyseAIController.analyserTexte
 );
 
-/* ── analyserImage() — from diagram ── */
+/* ── analyserImage() — from diagram — now uses Gemini AI ── */
 router.post('/AnalyserImage/:signalementId',
   requireAuth,
   analyseAIController.analyserImage

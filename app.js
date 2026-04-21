@@ -7,17 +7,17 @@ const http = require('http');
 require('dotenv').config();
 const { connectToMongoDB } = require('./config/db');
 
-var usersRouter = require('./routes/users.routes');
+var usersRouter        = require('./routes/users.routes');
 var signalementsRouter = require('./routes/signalements.routes');
-var categoriesRouter = require('./routes/categories.routes');
+var categoriesRouter   = require('./routes/categories.routes');
 var notificationsRouter = require('./routes/notifications.routes');
-var analyseAIRouter = require('./routes/analyseAI.routes');
+var analyseAIRouter    = require('./routes/analyseAI.routes');
 
 var app = express();
 
 /* Middlewares */
 app.use(logger('dev'));
-// ── CORS — allow Flutter emulator ─────────────────────────
+
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers',
@@ -28,18 +28,17 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
-
-app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* Routes */
-app.use('/users', usersRouter);
+app.use('/users',       usersRouter);
 app.use('/signalements', signalementsRouter);
-app.use('/categories', categoriesRouter);
+app.use('/categories',  categoriesRouter);
 app.use('/notifications', notificationsRouter);
-app.use('/analyseAI', analyseAIRouter);
+app.use('/analyseAI',   analyseAIRouter);
 
 /* Catch 404 */
 app.use(function (req, res) {
