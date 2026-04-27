@@ -18,15 +18,16 @@ router.post("/CreateUser",          userController.createUser);
 router.post("/CreateUserWithImage", upload.single("user_image"), userController.createUserWithImage);
 
 /* ── ADMIN ROUTES ── */
-router.post("/CreateUserAdmin",     userController.createUserAdmin);
-router.get("/GetAllUsers",          userController.getAllUsers);
-router.get("/GetUserById/:id",      userController.getUserById);
-router.put("/UpdateUser/:id",       userController.updateUser);
-router.put("/ChangePassword/:id",   userController.changePassword);
-router.delete("/DeleteUser/:id",    userController.deleteUser);
+router.post("/CreateUserAdmin",       userController.createUserAdmin);
+router.get("/GetAllUsers",            userController.getAllUsers);
+router.get("/GetUserById/:id",        userController.getUserById);
+router.put("/UpdateUser/:id",         userController.updateUser);
+router.put("/ChangePassword/:id",     userController.changePassword);
+router.put("/ToggleBlock/:id",        requireAuth, userController.toggleBlock); // ✅ NEW
+router.delete("/DeleteUser/:id",      userController.deleteUser);
 
 /* ── AGENT MUNICIPAL ROUTES ── */
-router.post("/CreateAgent",         userController.createUserAgentMunicipal);
+router.post("/CreateAgent",           userController.createUserAgentMunicipal);
 
 router.get("/GetAllAgents", async (req, res) => {
   try {

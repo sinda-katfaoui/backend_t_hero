@@ -158,7 +158,6 @@ module.exports.getUserById = async (req, res) => {
 /* ── updateUser() ── */
 module.exports.updateUser = async (req, res) => {
   try {
-    // Strip password and role — use changePassword for password
     const { motDePasse, role, ...allowedUpdates } = req.body;
 
     const user = await User.findById(req.params.id);
@@ -188,11 +187,34 @@ module.exports.changePassword = async (req, res) => {
     if (!user)
       return res.status(404).json({ message: "Utilisateur non trouvé" });
 
-    // Assign then save — pre-save hook hashes it
     user.motDePasse = motDePasse;
     await user.save();
 
     res.status(200).json({ message: "Mot de passe mis à jour avec succès" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/* ── toggleBlock() ── ✅ NEW */
+module.exports.toggleBlock = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user)
+      return res.status(404).json({ message: "Utilisateur non trouvé" });
+
+    if (user.role === 'ADMIN')
+      return res.status(403).json({ message: "Impossible de bloquer un admin" });
+
+    user.isBlocked = !user.isBlocked;
+    await user.save();
+
+    res.status(200).json({
+      message: user.isBlocked
+        ? "Utilisateur bloqué avec succès"
+        : "Utilisateur débloqué avec succès",
+      data: { isBlocked: user.isBlocked }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
