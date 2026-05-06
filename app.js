@@ -6,13 +6,14 @@
  * @architecture Fichier racine du projet — orchestre l'ensemble des composants :
  *               configuration, middlewares, routes, et connexion à la base de données.
  * @fonctionnalité Démarre l'API REST et établit la connexion MongoDB au lancement du serveur.
+ *                 [UPDATED] Ajout de la route /municipalities pour le système multi-municipalité
  */
 
 var express = require('express');
-var path = require('path');
+var path    = require('path');
 var cookieParser = require('cookie-parser');
-var logger = require('morgan');
-const http = require('http');
+var logger  = require('morgan');
+const http  = require('http');
 
 /* Chargement des variables d'environnement depuis le fichier .env */
 require('dotenv').config();
@@ -21,11 +22,12 @@ require('dotenv').config();
 const { connectToMongoDB } = require('./config/db');
 
 /* Import de tous les routeurs de l'application */
-var usersRouter         = require('./routes/users.routes');
-var signalementsRouter  = require('./routes/signalements.routes');
-var categoriesRouter    = require('./routes/categories.routes');
-var notificationsRouter = require('./routes/notifications.routes');
-var analyseAIRouter     = require('./routes/analyseAI.routes');
+var usersRouter          = require('./routes/users.routes');
+var signalementsRouter   = require('./routes/signalements.routes');
+var categoriesRouter     = require('./routes/categories.routes');
+var notificationsRouter  = require('./routes/notifications.routes');
+var analyseAIRouter      = require('./routes/analyseAI.routes');
+var municipalitiesRouter = require('./routes/municipalities.routes'); // [ADDED]
 
 /* Création de l'instance principale Express */
 var app = express();
@@ -41,7 +43,6 @@ app.use(logger('dev'));
  * Middleware CORS (Cross-Origin Resource Sharing).
  * Permet à des clients externes (ex: application mobile ou frontend web)
  * d'accéder à l'API depuis un domaine différent.
- * La méthode OPTIONS est gérée immédiatement pour les requêtes "preflight" du navigateur.
  */
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -49,7 +50,7 @@ app.use((req, res, next) => {
     'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Methods',
     'GET, POST, PUT, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') return res.sendStatus(200); // Réponse immédiate aux requêtes preflight
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
@@ -70,19 +71,22 @@ app.use(express.static(path.join(__dirname, 'public')));
    ───────────────────────────────────────── */
 
 /* Toutes les routes liées à la gestion des utilisateurs */
-app.use('/users',         usersRouter);
+app.use('/users',          usersRouter);
 
 /* Toutes les routes liées aux signalements citoyens */
-app.use('/signalements',  signalementsRouter);
+app.use('/signalements',   signalementsRouter);
 
 /* Toutes les routes liées aux catégories de signalements */
-app.use('/categories',    categoriesRouter);
+app.use('/categories',     categoriesRouter);
 
 /* Toutes les routes liées aux notifications */
-app.use('/notifications', notificationsRouter);
+app.use('/notifications',  notificationsRouter);
 
 /* Toutes les routes liées à l'analyse par intelligence artificielle */
-app.use('/analyseAI',     analyseAIRouter);
+app.use('/analyseAI',      analyseAIRouter);
+
+/* [ADDED] Routes liées au système multi-municipalité */
+app.use('/municipalities', municipalitiesRouter);
 
 /* ─────────────────────────────────────────
    GESTION DES ERREURS
@@ -90,7 +94,6 @@ app.use('/analyseAI',     analyseAIRouter);
 
 /**
  * Middleware de capture des routes inexistantes (404).
- * Retourne une réponse JSON claire si aucune route ne correspond à la requête.
  */
 app.use(function (req, res) {
   res.status(404).json({ message: "Route not found" });
@@ -98,14 +101,11 @@ app.use(function (req, res) {
 
 /**
  * Middleware global de gestion des erreurs applicatives.
- * Intercepte toutes les erreurs propagées via next(err).
- * En environnement de développement, renvoie le détail complet de l'erreur.
- * En production, masque les détails pour des raisons de sécurité.
  */
 app.use(function (err, req, res, next) {
   res.status(err.status || 500).json({
     message: err.message,
-    error: req.app.get('env') === 'development' ? err : {} // Détail visible uniquement en développement
+    error: req.app.get('env') === 'development' ? err : {},
   });
 });
 
@@ -113,14 +113,9 @@ app.use(function (err, req, res, next) {
    DÉMARRAGE DU SERVEUR
    ───────────────────────────────────────── */
 
-/* Création du serveur HTTP en encapsulant l'application Express */
 const server = http.createServer(app);
 
-/**
- * Lancement du serveur sur le port défini dans les variables d'environnement.
- * La connexion à MongoDB est établie dès que le serveur est prêt à recevoir des requêtes.
- */
 server.listen(process.env.PORT, () => {
-  connectToMongoDB(); // Connexion à la base de données MongoDB
+  connectToMongoDB();
   console.log(`Server is running on http://localhost:${process.env.PORT}`);
 });

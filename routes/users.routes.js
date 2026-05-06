@@ -1,79 +1,102 @@
 /**
  * ============================================================
  * FICHIER  : users.routes.js
- * RÔLE     : Définition de toutes les routes liées aux utilisateurs
- * RESPONSABILITÉ : Mapper chaque URL HTTP vers le contrôleur approprié
- * PLACE    : Couche "routes/" — reçoit les requêtes et les redirige
- *            vers les contrôleurs ou la logique inline
- * FONCTIONNALITÉ : Gestion des comptes (citoyens, admins, agents municipaux)
- *                  avec authentification, upload d'image et journalisation
+ * [FIXED]  : requireAuth ajouté sur toutes les routes protégées
+ *            Routes inline GetAllAgents / GetAgentById corrigées
+ *            avec filtre municipalityId strict
  * ============================================================
  */
 
-const express = require("express");
-const router = express.Router();
-const User = require("../models/user.model");
+const express    = require("express");
+const router     = express.Router();
+const User       = require("../models/user.model");
 
-const userController = require("../controllers/user.controller");
-const upload = require("../middlewares/uploadfile");
-const logMiddleware = require("../middlewares/LogMiddleware");
+const userController  = require("../controllers/user.controller");
+const upload          = require("../middlewares/uploadfile");
+const logMiddleware   = require("../middlewares/LogMiddleware");
 const { requireAuth } = require("../middlewares/authMiddleware");
 
-// Applique le middleware de journalisation sur toutes les routes de ce fichier
 router.use(logMiddleware);
 
-/* ── UTILISATEUR ROUTES ── */
+/* ── AUTH ROUTES ── */
 
-// Connexion d'un utilisateur (génère un token JWT)
+// Public — pas besoin d'auth pour se connecter
 router.post("/login",  userController.login);
 
-// Déconnexion — nécessite d'être authentifié (token valide obligatoire)
+// Requiert auth — on déconnecte un utilisateur connecté
 router.post("/logout", requireAuth, userController.logout);
 
 /* ── CITOYEN ROUTES ── */
-
-// Création d'un compte citoyen sans image de profil
+// Public — inscription citoyenne sans token
 router.post("/CreateUser",          userController.createUser);
-
-// Création d'un compte citoyen avec upload d'une image de profil (champ "user_image")
 router.post("/CreateUserWithImage", upload.single("user_image"), userController.createUserWithImage);
 
 /* ── ADMIN ROUTES ── */
+// Public — inscription admin via invitationCode
+router.post("/CreateUserAdmin", userController.createUserAdmin);
 
-// Création d'un compte administrateur
-router.post("/CreateUserAdmin",       userController.createUserAdmin);
+// [FIX] requireAuth ajouté — getAllUsers filtre par req.user.municipalityId
+// Sans requireAuth, req.user est undefined et la route retourne 403
+router.get("/GetAllUsers",
+  requireAuth,
+  userController.getAllUsers
+);
 
-// Récupération de tous les utilisateurs
-router.get("/GetAllUsers",            userController.getAllUsers);
+// [FIX] requireAuth ajouté — getUserById scoped à municipalityId
+router.get("/GetUserById/:id",
+  requireAuth,
+  userController.getUserById
+);
 
-// Récupération d'un utilisateur spécifique par son identifiant MongoDB
-router.get("/GetUserById/:id",        userController.getUserById);
+// [FIX] requireAuth ajouté — updateUser scoped à municipalityId
+router.put("/UpdateUser/:id",
+  requireAuth,
+  userController.updateUser
+);
 
-// Mise à jour des informations d'un utilisateur
-router.put("/UpdateUser/:id",         userController.updateUser);
+// [FIX] requireAuth ajouté — changePassword scoped à municipalityId
+router.put("/ChangePassword/:id",
+  requireAuth,
+  userController.changePassword
+);
 
-// Changement de mot de passe d'un utilisateur
-router.put("/ChangePassword/:id",     userController.changePassword);
+// requireAuth était déjà là ✅
+router.put("/ToggleBlock/:id",
+  requireAuth,
+  userController.toggleBlock
+);
 
-// Blocage / déblocage d'un utilisateur — requiert une authentification
-router.put("/ToggleBlock/:id",        requireAuth, userController.toggleBlock); // ✅ NEW
-
-// Suppression d'un utilisateur par son identifiant
-router.delete("/DeleteUser/:id",      userController.deleteUser);
+// [FIX] requireAuth ajouté — deleteUser scoped à municipalityId
+router.delete("/DeleteUser/:id",
+  requireAuth,
+  userController.deleteUser
+);
 
 /* ── AGENT MUNICIPAL ROUTES ── */
-
-// Création d'un compte agent municipal
-router.post("/CreateAgent",           userController.createUserAgentMunicipal);
+// Public — inscription agent via invitationCode
+router.post("/CreateAgent", userController.createUserAgentMunicipal);
 
 /**
- * Récupération de tous les agents municipaux
- * Logique inline : filtre les utilisateurs ayant le rôle "AGENT_MUNICIPAL"
- * et exclut le mot de passe des données retournées pour des raisons de sécurité
+ * [FIX] GetAllAgents — était non protégé et sans filtre municipalityId
+ * Retournait TOUS les agents de TOUTES les municipalités
+ * Maintenant : requireAuth + filtre strict par municipalityId
  */
-router.get("/GetAllAgents", async (req, res) => {
+router.get("/GetAllAgents", requireAuth, async (req, res) => {
   try {
-    const agents = await User.find({ role: "AGENT_MUNICIPAL" }).select("-motDePasse");
+    // Hard block — jamais de fallback find({})
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
+    console.log("[AGENTS] Fetching agents for municipality:", req.user.municipalityId);
+
+    const agents = await User.find({
+      role:           "AGENT_MUNICIPAL",
+      municipalityId: req.user.municipalityId,   // [FIX] filtre ajouté
+    }).select("-motDePasse");
+
     res.status(200).json({ data: agents });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -81,30 +104,43 @@ router.get("/GetAllAgents", async (req, res) => {
 });
 
 /**
- * Récupération d'un agent municipal par son identifiant
- * Vérifie à la fois l'_id ET le rôle pour s'assurer que l'utilisateur
- * est bien un agent municipal (double condition de sécurité)
+ * [FIX] GetAgentById — était non protégé et sans filtre municipalityId
+ * Un admin pouvait récupérer un agent d'une autre municipalité par son ID
+ * Maintenant : requireAuth + findOne({_id, role, municipalityId})
  */
-router.get("/GetAgentById/:id", async (req, res) => {
+router.get("/GetAgentById/:id", requireAuth, async (req, res) => {
   try {
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
     const agent = await User.findOne({
-      _id: req.params.id,
-      role: "AGENT_MUNICIPAL"
+      _id:            req.params.id,
+      role:           "AGENT_MUNICIPAL",
+      municipalityId: req.user.municipalityId,   // [FIX] filtre ajouté
     }).select("-motDePasse");
 
-    // Retourne 404 si aucun agent ne correspond à cet identifiant
-    if (!agent) return res.status(404).json({ message: "Agent Municipal non trouvé" });
+    if (!agent)
+      return res.status(404).json({ message: "Agent Municipal non trouvé" });
+
     res.status(200).json({ data: agent });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Mise à jour d'un agent municipal (réutilise le contrôleur updateUser)
-router.put("/UpdateAgent/:id",    userController.updateUser);
+// [FIX] requireAuth ajouté — updateUser scoped à municipalityId
+router.put("/UpdateAgent/:id",
+  requireAuth,
+  userController.updateUser
+);
 
-// Suppression d'un agent municipal (réutilise le contrôleur deleteUser)
-router.delete("/DeleteAgent/:id", userController.deleteUser);
+// [FIX] requireAuth ajouté — deleteUser scoped à municipalityId
+router.delete("/DeleteAgent/:id",
+  requireAuth,
+  userController.deleteUser
+);
 
-// Exporte le routeur pour être monté dans app.js
 module.exports = router;

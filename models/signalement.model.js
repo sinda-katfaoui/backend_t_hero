@@ -23,8 +23,6 @@ const mongoose = require('mongoose');
  */
 const signalementSchema = new mongoose.Schema(
   {
-    // From diagram: description, dateCreation, statut, priorite, localisation, photo
-
     // Description textuelle du problème signalé par le citoyen
     description:  { type: String, required: true },
 
@@ -38,7 +36,7 @@ const signalementSchema = new mongoose.Schema(
     statut: {
       type:    String,
       enum:    ['EN_ATTENTE', 'EN_COURS', 'RESOLU'],
-      default: 'EN_ATTENTE'
+      default: 'EN_ATTENTE',
     },
 
     /**
@@ -46,16 +44,16 @@ const signalementSchema = new mongoose.Schema(
      * Calculé automatiquement par le moteur IA lors de l'analyse
      */
     priorite: {
-      type: String,
-      enum: ['FAIBLE', 'MOYENNE', 'ELEVEE'],
-      default: 'FAIBLE'
+      type:    String,
+      enum:    ['FAIBLE', 'MOYENNE', 'ELEVEE'],
+      default: 'FAIBLE',
     },
 
     // Localisation géographique du problème signalé
     localisation: { type: String, required: true },
 
     // Nom du fichier photo joint au signalement (géré par uploadfile middleware)
-    photo:        { type: String, default: "" },
+    photo: { type: String, default: "" },
 
     /**
      * Relation : Citoyen crée Signalement (1 citoyen → 0..* signalements)
@@ -64,7 +62,7 @@ const signalementSchema = new mongoose.Schema(
     citoyen: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'User',
-      required: true
+      required: true,
     },
 
     /**
@@ -73,7 +71,7 @@ const signalementSchema = new mongoose.Schema(
      */
     categorie: {
       type: mongoose.Schema.Types.ObjectId,
-      ref:  'Categorie'
+      ref:  'Categorie',
     },
 
     /**
@@ -83,7 +81,7 @@ const signalementSchema = new mongoose.Schema(
      */
     agent: {
       type: mongoose.Schema.Types.ObjectId,
-      ref:  'User'
+      ref:  'User',
     },
 
     /**
@@ -93,7 +91,7 @@ const signalementSchema = new mongoose.Schema(
      */
     analyseIA: {
       type: mongoose.Schema.Types.ObjectId,
-      ref:  'AnalyseIA'
+      ref:  'AnalyseIA',
     },
 
     /**
@@ -104,9 +102,20 @@ const signalementSchema = new mongoose.Schema(
     notifications: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref:  'Notification'
-      }
-    ]
+        ref:  'Notification',
+      },
+    ],
+
+    /**
+     * [ADDED] Référence vers la municipalité du signalement
+     * Utilisé pour l'isolation des données : chaque admin/agent
+     * ne voit que les signalements de sa propre municipalité
+     */
+    municipalityId: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     'Municipality',
+      default: null,
+    },
   },
   // timestamps : ajoute automatiquement les champs createdAt et updatedAt
   { timestamps: true }

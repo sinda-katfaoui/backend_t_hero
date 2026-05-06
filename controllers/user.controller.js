@@ -9,53 +9,45 @@
  *                  (Citoyen, Admin, Agent Municipal), consultation,
  *                  mise à jour, changement de mot de passe,
  *                  blocage/déblocage et suppression d'utilisateurs
+ *                  [UPDATED] Système municipalité : invitationCode pour
+ *                  admin/agent, municipalityId pour citoyen
+ *                  [FIXED] Isolation stricte par municipalityId —
+ *                  aucun fallback find({}) — 403 si municipalité manquante
  * ============================================================
  */
 
-const User = require("../models/user.model");
-const jwt = require("jsonwebtoken");
+const User         = require("../models/user.model");
+const Municipality = require("../models/municipality.model");
+const jwt          = require("jsonwebtoken");
 
-// Clé secrète utilisée pour signer les tokens JWT (définie dans .env)
-const SECRET_KEY = process.env.JWT_SECRET || "mySecretKey";
-
-// Durée de validité du token JWT : 3 jours
+const SECRET_KEY  = process.env.JWT_SECRET || "mySecretKey";
 const TOKEN_EXPIRY = "3d";
 
-/**
- * Génère un token JWT signé contenant l'identifiant de l'utilisateur
- * Ce token sera retourné au client pour authentifier les requêtes suivantes
- */
 const createToken = (userId) => {
   return jwt.sign({ id: userId }, SECRET_KEY, { expiresIn: TOKEN_EXPIRY });
 };
 
 /* ── login() ── */
 
-/**
- * Authentification d'un utilisateur
- * - Vérifie la présence de l'email et du mot de passe
- * - Délègue la vérification des identifiants au modèle User (User.login)
- * - Génère et retourne un token JWT en cas de succès
- * - Retourne les informations essentielles de l'utilisateur (sans mot de passe)
- */
 module.exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password)
       return res.status(400).json({ message: "Email et mot de passe requis" });
 
-    const user = await User.login(email, password);
+    const user  = await User.login(email, password);
     const token = createToken(user._id);
 
     res.status(200).json({
       message: "Connexion réussie",
       token,
       data: {
-        _id:   user._id,
-        nom:   user.nom,
-        email: user.email,
-        role:  user.role
-      }
+        _id:            user._id,
+        nom:            user.nom,
+        email:          user.email,
+        role:           user.role,
+        municipalityId: user.municipalityId,
+      },
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -64,11 +56,6 @@ module.exports.login = async (req, res) => {
 
 /* ── logout() ── */
 
-/**
- * Déconnexion de l'utilisateur
- * La gestion du token est côté client (suppression du token stocké)
- * Le backend confirme simplement la déconnexion
- */
 module.exports.logout = async (req, res) => {
   try {
     res.status(200).json({ message: "Déconnexion réussie" });
@@ -79,27 +66,35 @@ module.exports.logout = async (req, res) => {
 
 /* ── createUser() ── */
 
-/**
- * Création d'un compte citoyen sans image de profil
- * - Vérifie que tous les champs obligatoires sont présents
- * - Vérifie l'unicité de l'email avant la création
- * - Attribue automatiquement le rôle "CITOYEN"
- * - Exclut le mot de passe de la réponse retournée (sécurité)
- */
 module.exports.createUser = async (req, res) => {
   try {
-    const { nom, email, motDePasse } = req.body;
+    const { nom, email, motDePasse, municipalityId } = req.body;
+
     if (!nom || !email || !motDePasse)
       return res.status(400).json({ message: "Tous les champs sont requis" });
+
+    if (!municipalityId)
+      return res.status(400).json({
+        message: "La sélection de la municipalité est obligatoire",
+      });
+
+    const municipality = await Municipality.findById(municipalityId);
+    if (!municipality)
+      return res.status(400).json({ message: "Municipalité introuvable" });
 
     const existing = await User.findOne({ email });
     if (existing)
       return res.status(409).json({ message: "Email déjà utilisé" });
 
-    const newUser = new User({ nom, email, motDePasse, role: "CITOYEN" });
+    const newUser = new User({
+      nom,
+      email,
+      motDePasse,
+      role:           "CITOYEN",
+      municipalityId: municipality._id,
+    });
     await newUser.save();
 
-    // Destructuration pour exclure le mot de passe de la réponse
     const { motDePasse: _, ...userData } = newUser.toObject();
     res.status(201).json({ message: "Citoyen créé avec succès", data: userData });
   } catch (error) {
@@ -109,34 +104,39 @@ module.exports.createUser = async (req, res) => {
 
 /* ── createUserWithImage() ── */
 
-/**
- * Création d'un compte citoyen avec image de profil
- * - Vérifie la présence des champs obligatoires et du fichier uploadé
- * - Vérifie l'unicité de l'email avant la création
- * - Sauvegarde le nom du fichier image (géré par le middleware uploadfile)
- * - Exclut le mot de passe de la réponse retournée (sécurité)
- */
 module.exports.createUserWithImage = async (req, res) => {
   try {
-    const { nom, email, motDePasse } = req.body;
+    const { nom, email, motDePasse, municipalityId } = req.body;
+
     if (!nom || !email || !motDePasse)
       return res.status(400).json({ message: "Tous les champs sont requis" });
 
     if (!req.file)
       return res.status(400).json({ message: "Image requise" });
 
+    if (!municipalityId)
+      return res.status(400).json({
+        message: "La sélection de la municipalité est obligatoire",
+      });
+
+    const municipality = await Municipality.findById(municipalityId);
+    if (!municipality)
+      return res.status(400).json({ message: "Municipalité introuvable" });
+
     const existing = await User.findOne({ email });
     if (existing)
       return res.status(409).json({ message: "Email déjà utilisé" });
 
     const newUser = new User({
-      nom, email, motDePasse,
-      role: "CITOYEN",
-      user_image: req.file.filename
+      nom,
+      email,
+      motDePasse,
+      role:           "CITOYEN",
+      user_image:     req.file.filename,
+      municipalityId: municipality._id,
     });
     await newUser.save();
 
-    // Destructuration pour exclure le mot de passe de la réponse
     const { motDePasse: _, ...userData } = newUser.toObject();
     res.status(201).json({ message: "Citoyen créé avec image", data: userData });
   } catch (error) {
@@ -146,27 +146,30 @@ module.exports.createUserWithImage = async (req, res) => {
 
 /* ── createUserAdmin() ── */
 
-/**
- * Création d'un compte administrateur
- * - Nécessite un code_Admin en plus des champs standards
- * - Attribue automatiquement le rôle "ADMIN"
- * - Vérifie l'unicité de l'email avant la création
- * - Exclut le mot de passe de la réponse retournée (sécurité)
- */
 module.exports.createUserAdmin = async (req, res) => {
   try {
-    const { nom, email, motDePasse, code_Admin } = req.body;
-    if (!nom || !email || !motDePasse || !code_Admin)
+    const { nom, email, motDePasse, invitationCode } = req.body;
+
+    if (!nom || !email || !motDePasse || !invitationCode)
       return res.status(400).json({ message: "Tous les champs sont requis" });
+
+    const municipality = await Municipality.findOne({ invitationCode });
+    if (!municipality)
+      return res.status(400).json({ message: "Code d'invitation invalide" });
 
     const existing = await User.findOne({ email });
     if (existing)
       return res.status(409).json({ message: "Email déjà utilisé" });
 
-    const newUser = new User({ nom, email, motDePasse, role: "ADMIN", code_Admin });
+    const newUser = new User({
+      nom,
+      email,
+      motDePasse,
+      role:           "ADMIN",
+      municipalityId: municipality._id,
+    });
     await newUser.save();
 
-    // Destructuration pour exclure le mot de passe de la réponse
     const { motDePasse: _, ...userData } = newUser.toObject();
     res.status(201).json({ message: "Admin créé avec succès", data: userData });
   } catch (error) {
@@ -176,29 +179,35 @@ module.exports.createUserAdmin = async (req, res) => {
 
 /* ── createUserAgentMunicipal() ── */
 
-/**
- * Création d'un compte agent municipal
- * - Nécessite un code_Agent en plus des champs standards
- * - Attribue automatiquement le rôle "AGENT_MUNICIPAL"
- * - Vérifie l'unicité de l'email avant la création
- * - Exclut le mot de passe de la réponse retournée (sécurité)
- */
 module.exports.createUserAgentMunicipal = async (req, res) => {
   try {
-    const { nom, email, motDePasse, code_Agent } = req.body;
-    if (!nom || !email || !motDePasse || !code_Agent)
+    const { nom, email, motDePasse, invitationCode } = req.body;
+
+    if (!nom || !email || !motDePasse || !invitationCode)
       return res.status(400).json({ message: "Tous les champs sont requis" });
+
+    const municipality = await Municipality.findOne({ invitationCode });
+    if (!municipality)
+      return res.status(400).json({ message: "Code d'invitation invalide" });
 
     const existing = await User.findOne({ email });
     if (existing)
       return res.status(409).json({ message: "Email déjà utilisé" });
 
-    const newUser = new User({ nom, email, motDePasse, role: "AGENT_MUNICIPAL", code_Agent });
+    const newUser = new User({
+      nom,
+      email,
+      motDePasse,
+      role:           "AGENT_MUNICIPAL",
+      municipalityId: municipality._id,
+    });
     await newUser.save();
 
-    // Destructuration pour exclure le mot de passe de la réponse
     const { motDePasse: _, ...userData } = newUser.toObject();
-    res.status(201).json({ message: "Agent Municipal créé avec succès", data: userData });
+    res.status(201).json({
+      message: "Agent Municipal créé avec succès",
+      data:    userData,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -206,13 +215,22 @@ module.exports.createUserAgentMunicipal = async (req, res) => {
 
 /* ── getAllUsers() ── */
 
-/**
- * Récupération de tous les utilisateurs
- * - Exclut le mot de passe de chaque document retourné (sécurité)
- */
 module.exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-motDePasse");
+    // [FIX] Hard block — never fall back to find({})
+    // If municipalityId is missing, refuse the request entirely
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie pour cet utilisateur",
+      });
+    }
+
+    console.log("[USER] Fetching users for municipality:", req.user.municipalityId);
+
+    const users = await User.find({
+      municipalityId: req.user.municipalityId,
+    }).select("-motDePasse");
+
     res.status(200).json({ data: users });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -221,16 +239,24 @@ module.exports.getAllUsers = async (req, res) => {
 
 /* ── getUserById() ── */
 
-/**
- * Récupération d'un utilisateur par son identifiant MongoDB
- * - Retourne 404 si l'utilisateur n'existe pas
- * - Exclut le mot de passe de la réponse (sécurité)
- */
 module.exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select("-motDePasse");
+    // [FIX] Scoped to municipalityId — prevents fetching any user by ID
+    // across municipality boundaries
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
+    const user = await User.findOne({
+      _id:            req.params.id,
+      municipalityId: req.user.municipalityId,
+    }).select("-motDePasse");
+
     if (!user)
       return res.status(404).json({ message: "Utilisateur non trouvé" });
+
     res.status(200).json({ data: user });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -239,25 +265,30 @@ module.exports.getUserById = async (req, res) => {
 
 /* ── updateUser() ── */
 
-/**
- * Mise à jour des informations d'un utilisateur
- * - Sécurité : exclut motDePasse et role des champs modifiables
- *   pour éviter toute élévation de privilèges via cette route
- * - Retourne le document mis à jour sans le mot de passe
- */
 module.exports.updateUser = async (req, res) => {
   try {
-    // Extraction explicite de motDePasse et role pour les bloquer
-    const { motDePasse, role, ...allowedUpdates } = req.body;
+    // [FIX] Scoped to municipalityId — cannot update a user from another municipality
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
 
-    const user = await User.findById(req.params.id);
+    // Strip sensitive fields — prevent privilege escalation via this route
+    const { motDePasse, role, municipalityId, ...allowedUpdates } = req.body;
+
+    const user = await User.findOne({
+      _id:            req.params.id,
+      municipalityId: req.user.municipalityId,
+    });
+
     if (!user)
       return res.status(404).json({ message: "Utilisateur non trouvé" });
 
     const updated = await User.findByIdAndUpdate(
       req.params.id,
       allowedUpdates,
-      { new: true } // Retourne le document après modification
+      { new: true }
     ).select("-motDePasse");
 
     res.status(200).json({ message: "Utilisateur mis à jour", data: updated });
@@ -268,19 +299,24 @@ module.exports.updateUser = async (req, res) => {
 
 /* ── changePassword() ── */
 
-/**
- * Changement du mot de passe d'un utilisateur
- * - Route dédiée uniquement au changement de mot de passe
- * - Utilise user.save() pour déclencher le hachage automatique
- *   du mot de passe défini dans le modèle User (hook pre-save)
- */
 module.exports.changePassword = async (req, res) => {
   try {
     const { motDePasse } = req.body;
     if (!motDePasse)
       return res.status(400).json({ message: "Mot de passe requis" });
 
-    const user = await User.findById(req.params.id);
+    // [FIX] Scoped to municipalityId
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
+    const user = await User.findOne({
+      _id:            req.params.id,
+      municipalityId: req.user.municipalityId,
+    });
+
     if (!user)
       return res.status(404).json({ message: "Utilisateur non trouvé" });
 
@@ -293,25 +329,28 @@ module.exports.changePassword = async (req, res) => {
   }
 };
 
-/* ── toggleBlock() ── ✅ NEW */
+/* ── toggleBlock() ── */
 
-/**
- * Blocage ou déblocage d'un utilisateur (bascule automatique)
- * - Sécurité : interdit le blocage d'un administrateur
- * - Inverse la valeur de isBlocked à chaque appel (toggle)
- * - Retourne un message adapté selon l'état résultant
- */
 module.exports.toggleBlock = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    // [FIX] Scoped to municipalityId — cannot block a user from another municipality
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
+    const user = await User.findOne({
+      _id:            req.params.id,
+      municipalityId: req.user.municipalityId,
+    });
+
     if (!user)
       return res.status(404).json({ message: "Utilisateur non trouvé" });
 
-    // Protection : un administrateur ne peut jamais être bloqué
-    if (user.role === 'ADMIN')
+    if (user.role === "ADMIN")
       return res.status(403).json({ message: "Impossible de bloquer un admin" });
 
-    // Inversion de l'état de blocage
     user.isBlocked = !user.isBlocked;
     await user.save();
 
@@ -319,7 +358,7 @@ module.exports.toggleBlock = async (req, res) => {
       message: user.isBlocked
         ? "Utilisateur bloqué avec succès"
         : "Utilisateur débloqué avec succès",
-      data: { isBlocked: user.isBlocked }
+      data: { isBlocked: user.isBlocked },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -328,14 +367,20 @@ module.exports.toggleBlock = async (req, res) => {
 
 /* ── deleteUser() ── */
 
-/**
- * Suppression définitive d'un utilisateur par son identifiant
- * - Vérifie l'existence de l'utilisateur avant suppression
- * - Retourne 404 si l'utilisateur n'existe pas
- */
 module.exports.deleteUser = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    // [FIX] Scoped to municipalityId — cannot delete a user from another municipality
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
+    const user = await User.findOne({
+      _id:            req.params.id,
+      municipalityId: req.user.municipalityId,
+    });
+
     if (!user)
       return res.status(404).json({ message: "Utilisateur non trouvé" });
 

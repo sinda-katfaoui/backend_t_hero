@@ -1,34 +1,18 @@
 /**
  * ============================================================
  * FICHIER  : analyseAI.controller.js
- * RÔLE     : Logique métier complète de l'analyse intelligente
- *            des signalements par intelligence artificielle
- * RESPONSABILITÉ : Coordonner les appels à Google Vision API et
- *                  au moteur IA pour analyser textes et images,
- *                  puis persister les résultats en base de données
- * PLACE    : Couche "controllers/" — orchestrateur entre les routes,
- *            les services IA (visionService, aiEngine) et les modèles
- * FONCTIONNALITÉ : Analyse de texte par mots-clés, analyse d'image
- *                  via Google Vision API, analyse directe en Base64
- *                  depuis Flutter, consultation et suppression des
- *                  analyses avec mise à jour automatique de la priorité
- *                  du signalement concerné
+ * [FIXED]  : getAllAnalyses — ajout du filtre municipalityId
+ *            via populate + filtre sur le signalement
  * ============================================================
  */
 
-const { analyzeImage } = require('../services/visionService');
+const { analyzeImage }  = require('../services/visionService');
 const { analyzeReport } = require('../services/aiEngine');
-const AnalyseIA   = require('../models/analyseAI.model');
-const Signalement = require('../models/signalement.model');
+const AnalyseIA         = require('../models/analyseAI.model');
+const Signalement       = require('../models/signalement.model');
 
-/* ── analyserTexte() — from diagram ── */
+/* ── analyserTexte() ── */
 
-/**
- * Analyse textuelle d'un signalement existant par mots-clés
- * - Vérifie l'existence du signalement et l'absence d'une analyse précédente
- * - Délègue l'analyse à la fonction locale analyseTexteIA()
- * - Sauvegarde le résultat et met à jour la priorité du signalement
- */
 exports.analyserTexte = async (req, res) => {
   try {
     const { signalementId } = req.params;
@@ -38,16 +22,14 @@ exports.analyserTexte = async (req, res) => {
       return res.status(404).json({ message: "Signalement non trouvé" });
     }
 
-    // Empêche la création d'une deuxième analyse pour le même signalement
     const existing = await AnalyseIA.findOne({ signalement: signalementId });
     if (existing) {
       return res.status(409).json({
         message: "Une analyse existe déjà pour ce signalement",
-        data:    existing
+        data:    existing,
       });
     }
 
-    // Analyse la description textuelle du signalement par mots-clés
     const resultat = analyseTexteIA(signalement.description);
 
     const analyse = new AnalyseIA({
@@ -55,37 +37,27 @@ exports.analyserTexte = async (req, res) => {
       scoreConfiance:    resultat.scoreConfiance,
       resultatCategorie: resultat.resultatCategorie,
       resultatPriorite:  resultat.resultatPriorite,
-      analyseTexte:      signalement.description
+      analyseTexte:      signalement.description,
     });
 
     await analyse.save();
 
-    // Met à jour le signalement avec la référence à l'analyse et la priorité détectée
     await Signalement.findByIdAndUpdate(signalementId, {
       analyseIA: analyse._id,
-      priorite:  resultat.resultatPriorite
+      priorite:  resultat.resultatPriorite,
     });
 
     res.status(201).json({
       message: "Analyse texte effectuée avec succès",
-      data:    analyse
+      data:    analyse,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-/* ── analyserImage() — uses Google Vision API ── */
+/* ── analyserImage() ── */
 
-/**
- * Analyse de l'image d'un signalement via Google Vision API
- * - Vérifie l'existence du signalement, de sa photo et l'absence d'analyse existante
- * - Envoie la photo à Google Vision API pour obtenir des labels de détection
- * - Compte les signalements dans la même zone pour ajuster la priorité
- * - Fait appel au moteur IA (aiEngine) pour calculer la priorité finale
- * - Mappe les résultats IA vers les valeurs enum du modèle
- * - Sauvegarde l'analyse et met à jour la priorité du signalement
- */
 exports.analyserImage = async (req, res) => {
   try {
     const { signalementId } = req.params;
@@ -99,16 +71,14 @@ exports.analyserImage = async (req, res) => {
       return res.status(400).json({ message: "Ce signalement n'a pas de photo à analyser" });
     }
 
-    // Empêche la création d'une deuxième analyse pour le même signalement
     const existing = await AnalyseIA.findOne({ signalement: signalementId });
     if (existing) {
       return res.status(409).json({
         message: "Une analyse existe déjà pour ce signalement",
-        data:    existing
+        data:    existing,
       });
     }
 
-    // Appel à Google Vision API — isolé pour ne pas bloquer si le service échoue
     let labels = [];
     try {
       labels = await analyzeImage(signalement.photo);
@@ -117,20 +87,16 @@ exports.analyserImage = async (req, res) => {
       console.error("[AnalyseAI] Google Vision error:", visionErr.message);
     }
 
-    // Compte combien de signalements existent dans la même zone géographique
-    // Ce chiffre influence le calcul de la priorité dans le moteur IA
     let zoneRepetition = 0;
     if (signalement.localisation && signalement.localisation.zone) {
       zoneRepetition = await Signalement.countDocuments({
-        'localisation.zone': signalement.localisation.zone
+        'localisation.zone': signalement.localisation.zone,
       });
     }
 
-    // Calcule la priorité et la catégorie via la formule du moteur IA
     const aiResult = analyzeReport(labels, zoneRepetition, new Date());
     console.log("[AnalyseAI] AI Result:", aiResult);
 
-    // Correspondance entre les catégories du moteur IA et les valeurs enum du modèle
     const categoryMap = {
       road:           'VOIRIE',
       waste:          'PROPRETE',
@@ -140,7 +106,6 @@ exports.analyserImage = async (req, res) => {
       other:          'AUTRE',
     };
 
-    // Correspondance entre les priorités du moteur IA et les valeurs enum du modèle
     const priorityMap = {
       critical: 'ELEVEE',
       high:     'ELEVEE',
@@ -148,8 +113,8 @@ exports.analyserImage = async (req, res) => {
       low:      'FAIBLE',
     };
 
-    const resultatCategorie = categoryMap[aiResult.category]  || 'AUTRE';
-    const resultatPriorite  = priorityMap[aiResult.priority]  || 'FAIBLE';
+    const resultatCategorie = categoryMap[aiResult.category] || 'AUTRE';
+    const resultatPriorite  = priorityMap[aiResult.priority] || 'FAIBLE';
     const scoreConfiance    = aiResult.confidence;
 
     const analyse = new AnalyseIA({
@@ -158,22 +123,20 @@ exports.analyserImage = async (req, res) => {
       resultatCategorie,
       resultatPriorite,
       analyseImage:      signalement.photo,
-      // Stocke les métadonnées IA supplémentaires dans le champ analyseTexte pour référence
       analyseTexte:      JSON.stringify({
-        labels:    labels.slice(0, 5),
-        score:     aiResult.score,
-        isNight:   aiResult.isNight,
-        category:  aiResult.category,
-        priority:  aiResult.priority,
-      })
+        labels:   labels.slice(0, 5),
+        score:    aiResult.score,
+        isNight:  aiResult.isNight,
+        category: aiResult.category,
+        priority: aiResult.priority,
+      }),
     });
 
     await analyse.save();
 
-    // Met à jour le signalement avec la référence à l'analyse et la priorité calculée
     await Signalement.findByIdAndUpdate(signalementId, {
       analyseIA: analyse._id,
-      priorite:  resultatPriorite
+      priorite:  resultatPriorite,
     });
 
     res.status(201).json({
@@ -185,7 +148,7 @@ exports.analyserImage = async (req, res) => {
         score:      aiResult.score,
         confidence: aiResult.confidence,
         labels:     labels.slice(0, 5),
-      }
+      },
     });
   } catch (error) {
     console.error("[AnalyseAI] Error:", error);
@@ -193,16 +156,8 @@ exports.analyserImage = async (req, res) => {
   }
 };
 
-/* ── analyzeSignalement() — called directly with Base64 image from Flutter ── */
+/* ── analyzeSignalement() — Base64 from Flutter ── */
 
-/**
- * Analyse directe d'une image envoyée en Base64 depuis l'application Flutter
- * - Accepte une image encodée en Base64 sans nécessiter un signalement existant
- * - Nettoie le préfixe Base64 (data:image/...) avant traitement
- * - Appelle Google Vision API pour la détection de labels
- * - Calcule la priorité et la catégorie via le moteur IA
- * - Si un signalementId est fourni, lie l'analyse au signalement et met à jour sa priorité
- */
 exports.analyzeSignalement = async (req, res) => {
   try {
     const { image, signalementId, zone } = req.body;
@@ -211,10 +166,8 @@ exports.analyzeSignalement = async (req, res) => {
       return res.status(400).json({ success: false, message: "image (Base64) is required." });
     }
 
-    // Supprime le préfixe MIME du Base64 pour obtenir les données brutes
     const base64 = image.replace(/^data:image\/\w+;base64,/, "");
 
-    // Appel à Google Vision API — isolé pour ne pas bloquer si le service échoue
     let labels = [];
     try {
       labels = await analyzeImage(base64);
@@ -223,16 +176,13 @@ exports.analyzeSignalement = async (req, res) => {
       console.error("[AnalyseAI] Vision error:", visionErr.message);
     }
 
-    // Compte les signalements dans la même zone si fournie (influence la priorité)
     let zoneRepetition = 0;
     if (zone) {
       zoneRepetition = await Signalement.countDocuments({ zone });
     }
 
-    // Calcule la priorité et la catégorie via la formule du moteur IA
     const aiResult = analyzeReport(labels, zoneRepetition, new Date());
 
-    // Correspondance entre les catégories du moteur IA et les valeurs enum du modèle
     const categoryMap = {
       road:           'VOIRIE',
       waste:          'PROPRETE',
@@ -242,7 +192,6 @@ exports.analyzeSignalement = async (req, res) => {
       other:          'AUTRE',
     };
 
-    // Correspondance entre les priorités du moteur IA et les valeurs enum du modèle
     const priorityMap = {
       critical: 'ELEVEE',
       high:     'ELEVEE',
@@ -255,7 +204,6 @@ exports.analyzeSignalement = async (req, res) => {
       scoreConfiance:    aiResult.confidence,
       resultatCategorie: categoryMap[aiResult.category] || 'AUTRE',
       resultatPriorite:  priorityMap[aiResult.priority] || 'FAIBLE',
-      // Stocke uniquement les 100 premiers caractères du Base64 (pas l'image complète)
       analyseImage:      base64.substring(0, 100),
       analyseTexte:      JSON.stringify({
         labels:   labels.slice(0, 5),
@@ -266,7 +214,6 @@ exports.analyzeSignalement = async (req, res) => {
       }),
     });
 
-    // Lie l'analyse au signalement et met à jour sa priorité si un ID est fourni
     if (signalementId) {
       await Signalement.findByIdAndUpdate(signalementId, {
         analyseIA: analyseDoc._id,
@@ -294,17 +241,12 @@ exports.analyzeSignalement = async (req, res) => {
 
 /* ── getAnalyseBySignalement() ── */
 
-/**
- * Récupération de l'analyse liée à un signalement spécifique
- * - Peuple les informations du signalement (description, statut, priorité, photo)
- * - Retourne 404 si aucune analyse n'existe pour ce signalement
- */
 exports.getAnalyseBySignalement = async (req, res) => {
   try {
     const analyse = await AnalyseIA.findOne({ signalement: req.params.signalementId })
       .populate({
         path:   'signalement',
-        select: 'description statut priorite localisation photo'
+        select: 'description statut priorite localisation photo',
       });
 
     if (!analyse) {
@@ -317,22 +259,43 @@ exports.getAnalyseBySignalement = async (req, res) => {
   }
 };
 
-/* ── getAllAnalyses() — for Admin dashboard ── */
+/* ── getAllAnalyses() — Admin dashboard ── */
 
 /**
- * Récupération de toutes les analyses disponibles
- * - Réservé au tableau de bord administrateur
- * - Trie par date d'analyse décroissante (les plus récentes en premier)
- * - Peuple les informations essentielles du signalement lié
+ * [FIX] Filtre par municipalityId via les signalements liés
+ * Ancienne version : AnalyseIA.find() — retournait TOUT sans filtre
+ * Nouvelle version : récupère d'abord les signalements de la municipalité
+ *                    puis filtre les analyses correspondantes
  */
 exports.getAllAnalyses = async (req, res) => {
   try {
-    const analyses = await AnalyseIA.find()
+    // Hard block — jamais de fallback sans municipalityId
+    if (!req.user?.municipalityId) {
+      return res.status(403).json({
+        message: "Accès refusé : municipalité non définie",
+      });
+    }
+
+    console.log("[ANALYSES] Fetching for municipality:", req.user.municipalityId);
+
+    // Étape 1 : récupérer les IDs des signalements de cette municipalité
+    const signalements = await Signalement.find({
+      municipalityId: req.user.municipalityId,
+    }).select('_id');
+
+    const signalementIds = signalements.map(s => s._id);
+
+    // Étape 2 : récupérer uniquement les analyses liées à ces signalements
+    const analyses = await AnalyseIA.find({
+      signalement: { $in: signalementIds },
+    })
       .populate({
         path:   'signalement',
-        select: 'description statut priorite localisation'
+        select: 'description statut priorite localisation',
       })
       .sort({ dateAnalyse: -1 });
+
+    console.log(`[ANALYSES] Found ${analyses.length} analyses for municipality ${req.user.municipalityId}`);
 
     res.status(200).json({ data: analyses });
   } catch (error) {
@@ -342,12 +305,6 @@ exports.getAllAnalyses = async (req, res) => {
 
 /* ── deleteAnalyse() ── */
 
-/**
- * Suppression définitive d'une analyse par son identifiant
- * - Vérifie l'existence de l'analyse avant suppression
- * - NETTOYAGE : retire la référence analyseIA du signalement lié
- *   pour maintenir l'intégrité des données (pas de référence orpheline)
- */
 exports.deleteAnalyse = async (req, res) => {
   try {
     const analyse = await AnalyseIA.findById(req.params.id);
@@ -355,9 +312,8 @@ exports.deleteAnalyse = async (req, res) => {
       return res.status(404).json({ message: "Analyse non trouvée" });
     }
 
-    // Supprime la référence à l'analyse dans le signalement lié
     await Signalement.findByIdAndUpdate(analyse.signalement, {
-      analyseIA: null
+      analyseIA: null,
     });
 
     await AnalyseIA.findByIdAndDelete(req.params.id);
@@ -367,17 +323,8 @@ exports.deleteAnalyse = async (req, res) => {
   }
 };
 
-/* ────────────────────────────────────────────────
-   AI LOGIC HELPERS
-──────────────────────────────────────────────── */
+/* ── AI HELPERS ── */
 
-/**
- * Analyse textuelle par détection de mots-clés dans la description
- * - Convertit la description en minuscules pour une comparaison insensible à la casse
- * - Détermine la catégorie, la priorité et le score de confiance
- *   selon les mots-clés détectés dans le texte
- * - Retourne des valeurs par défaut (AUTRE / FAIBLE / 0.5) si aucun mot-clé ne correspond
- */
 function analyseTexteIA(description) {
   const text = description.toLowerCase();
 
@@ -406,15 +353,10 @@ function analyseTexteIA(description) {
   return { resultatCategorie, resultatPriorite, scoreConfiance };
 }
 
-/**
- * Ancienne fonction d'analyse d'image par nom de fichier (non utilisée)
- * Remplacée par l'appel à Google Vision API via visionService.js
- * Conservée pour référence historique
- */
 function analyseImageIA(photoFilename) {
   return {
     resultatCategorie: 'AUTRE',
     resultatPriorite:  'FAIBLE',
-    scoreConfiance:    0.5
+    scoreConfiance:    0.5,
   };
 }

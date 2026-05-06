@@ -14,7 +14,7 @@
  */
 
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
+const bcrypt   = require("bcrypt");
 
 /**
  * Schéma Mongoose définissant la structure d'un utilisateur
@@ -23,6 +23,7 @@ const bcrypt = require("bcrypt");
  * - user_image : photo de profil (nom du fichier uploadé)
  * - code_Agent / code_Admin : codes d'identification spécifiques au rôle
  * - isBlocked : permet de bloquer l'accès sans supprimer le compte
+ * - municipalityId : [ADDED] lie l'utilisateur à sa municipalité
  * - timestamps : ajoute automatiquement createdAt et updatedAt
  */
 const userSchema = new mongoose.Schema(
@@ -32,14 +33,22 @@ const userSchema = new mongoose.Schema(
     // select: false — le mot de passe est exclu de toutes les requêtes par défaut (sécurité)
     motDePasse: { type: String, required: true, select: false },
     role: {
-      type: String,
-      enum: ["CITOYEN", "AGENT_MUNICIPAL", "ADMIN"],
-      required: true
+      type:     String,
+      enum:     ["CITOYEN", "AGENT_MUNICIPAL", "ADMIN"],
+      required: true,
     },
     user_image: { type: String, default: "" },
     code_Agent: { type: Number },
     code_Admin: { type: Number },
-    isBlocked:  { type: Boolean, default: false }
+    isBlocked:  { type: Boolean, default: false },
+
+    // [ADDED] Référence vers la municipalité de l'utilisateur
+    // Obligatoire pour l'isolation des données multi-municipalité
+    municipalityId: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     "Municipality",
+      default: null,
+    },
   },
   { timestamps: true }
 );
@@ -52,7 +61,7 @@ const userSchema = new mongoose.Schema(
  */
 userSchema.pre("save", async function () {
   if (!this.isModified("motDePasse")) return;
-  const salt = await bcrypt.genSalt(10);
+  const salt     = await bcrypt.genSalt(10);
   this.motDePasse = await bcrypt.hash(this.motDePasse, salt);
 });
 
@@ -66,9 +75,8 @@ userSchema.pre("save", async function () {
  * - Lève des erreurs explicites pour chaque cas d'échec
  */
 userSchema.statics.login = async function (email, password) {
-  // ── select: false hides motDePasse by default
-  // ── we must explicitly request it here ────────────────────
-  const user = await this.findOne({ email }).select('+motDePasse');
+  // select: false hides motDePasse by default — must explicitly request it
+  const user = await this.findOne({ email }).select("+motDePasse");
   if (!user) throw new Error("Email incorrect");
 
   // Compare le mot de passe en clair avec le hash stocké en base
