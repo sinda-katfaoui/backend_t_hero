@@ -1,15 +1,7 @@
-/**
- * ============================================================
- * FICHIER  : analyseAI.controller.js
- * [FIXED]  : getAllAnalyses — ajout du filtre municipalityId
- *            via populate + filtre sur le signalement
- * ============================================================
- */
-
-const { analyzeImage }  = require('../services/visionService');
-const { analyzeReport } = require('../services/aiEngine');
-const AnalyseIA         = require('../models/analyseAI.model');
-const Signalement       = require('../models/signalement.model');
+const { analyzeImage, checkImageRelevance } = require('../services/visionService');
+const { analyzeReport }                     = require('../services/aiEngine');
+const AnalyseIA                             = require('../models/analyseAI.model');
+const Signalement                           = require('../models/signalement.model');
 
 /* ── analyserTexte() ── */
 
@@ -18,17 +10,15 @@ exports.analyserTexte = async (req, res) => {
     const { signalementId } = req.params;
 
     const signalement = await Signalement.findById(signalementId);
-    if (!signalement) {
+    if (!signalement)
       return res.status(404).json({ message: "Signalement non trouvé" });
-    }
 
     const existing = await AnalyseIA.findOne({ signalement: signalementId });
-    if (existing) {
+    if (existing)
       return res.status(409).json({
         message: "Une analyse existe déjà pour ce signalement",
         data:    existing,
       });
-    }
 
     const resultat = analyseTexteIA(signalement.description);
 
@@ -63,21 +53,18 @@ exports.analyserImage = async (req, res) => {
     const { signalementId } = req.params;
 
     const signalement = await Signalement.findById(signalementId);
-    if (!signalement) {
+    if (!signalement)
       return res.status(404).json({ message: "Signalement non trouvé" });
-    }
 
-    if (!signalement.photo) {
+    if (!signalement.photo)
       return res.status(400).json({ message: "Ce signalement n'a pas de photo à analyser" });
-    }
 
     const existing = await AnalyseIA.findOne({ signalement: signalementId });
-    if (existing) {
+    if (existing)
       return res.status(409).json({
         message: "Une analyse existe déjà pour ce signalement",
         data:    existing,
       });
-    }
 
     let labels = [];
     try {
@@ -156,26 +143,61 @@ exports.analyserImage = async (req, res) => {
   }
 };
 
-/* ── analyzeSignalement() — Base64 from Flutter ── */
+/* ── analyzeSignalement() — Base64 from Flutter (preview + submit) ── */
 
 exports.analyzeSignalement = async (req, res) => {
   try {
     const { image, signalementId, zone } = req.body;
 
     if (!image) {
-      return res.status(400).json({ success: false, message: "image (Base64) is required." });
+      return res.status(400).json({
+        success: false,
+        message: "image (Base64) is required.",
+      });
     }
 
     const base64 = image.replace(/^data:image\/\w+;base64,/, "");
 
+    // ── Step 1: Get labels from Vision API ──────────────────
     let labels = [];
     try {
       labels = await analyzeImage(base64);
       console.log("[AnalyseAI] Google Vision labels:", labels);
     } catch (visionErr) {
       console.error("[AnalyseAI] Vision error:", visionErr.message);
+      // If Vision API fails completely, allow graceful fallback
+      return res.status(201).json({
+        success:   true,
+        relevant:  true,
+        analyseId: null,
+        ai: {
+          category:   'other',
+          priority:   'low',
+          score:      0,
+          confidence: 0,
+          isNight:    false,
+          labels:     [],
+        },
+      });
     }
 
+    // ── Step 2: Check image relevance ───────────────────────
+    // Reject images with no urban content (faces, food, furniture, etc.)
+    const { relevant, matchedLabel } = checkImageRelevance(labels);
+
+    if (!relevant) {
+      console.log("[AnalyseAI] Image rejected — not urban. Labels:", labels.map(l => l.label));
+      return res.status(400).json({
+        success:  false,
+        relevant: false,
+        message:  "Image non pertinente — veuillez photographier un problème urbain (route, déchet, éclairage, etc.)",
+        labels:   labels.map(l => l.label), // helpful for debugging
+      });
+    }
+
+    console.log(`[AnalyseAI] Image accepted — matched urban keyword: "${matchedLabel}"`);
+
+    // ── Step 3: Compute priority with AI Engine ─────────────
     let zoneRepetition = 0;
     if (zone) {
       zoneRepetition = await Signalement.countDocuments({ zone });
@@ -199,22 +221,24 @@ exports.analyzeSignalement = async (req, res) => {
       low:      'FAIBLE',
     };
 
-    const analyseDoc = await AnalyseIA.create({
-      signalement:       signalementId || null,
-      scoreConfiance:    aiResult.confidence,
-      resultatCategorie: categoryMap[aiResult.category] || 'AUTRE',
-      resultatPriorite:  priorityMap[aiResult.priority] || 'FAIBLE',
-      analyseImage:      base64.substring(0, 100),
-      analyseTexte:      JSON.stringify({
-        labels:   labels.slice(0, 5),
-        score:    aiResult.score,
-        isNight:  aiResult.isNight,
-        category: aiResult.category,
-        priority: aiResult.priority,
-      }),
-    });
-
+    // ── Step 4: Save AnalyseIA only if signalementId provided ─
+    let analyseDoc = null;
     if (signalementId) {
+      analyseDoc = await AnalyseIA.create({
+        signalement:       signalementId,
+        scoreConfiance:    aiResult.confidence,
+        resultatCategorie: categoryMap[aiResult.category] || 'AUTRE',
+        resultatPriorite:  priorityMap[aiResult.priority] || 'FAIBLE',
+        analyseImage:      base64.substring(0, 100),
+        analyseTexte:      JSON.stringify({
+          labels:   labels.slice(0, 5),
+          score:    aiResult.score,
+          isNight:  aiResult.isNight,
+          category: aiResult.category,
+          priority: aiResult.priority,
+        }),
+      });
+
       await Signalement.findByIdAndUpdate(signalementId, {
         analyseIA: analyseDoc._id,
         priorite:  priorityMap[aiResult.priority] || 'FAIBLE',
@@ -223,7 +247,8 @@ exports.analyzeSignalement = async (req, res) => {
 
     return res.status(201).json({
       success:   true,
-      analyseId: analyseDoc._id,
+      relevant:  true,
+      analyseId: analyseDoc?._id || null,
       ai: {
         category:   aiResult.category,
         priority:   aiResult.priority,
@@ -233,6 +258,7 @@ exports.analyzeSignalement = async (req, res) => {
         labels:     labels.slice(0, 5),
       },
     });
+
   } catch (error) {
     console.error("[AnalyseAI Controller] Error:", error);
     return res.status(500).json({ success: false, message: error.message });
@@ -243,15 +269,15 @@ exports.analyzeSignalement = async (req, res) => {
 
 exports.getAnalyseBySignalement = async (req, res) => {
   try {
-    const analyse = await AnalyseIA.findOne({ signalement: req.params.signalementId })
-      .populate({
-        path:   'signalement',
-        select: 'description statut priorite localisation photo',
-      });
+    const analyse = await AnalyseIA.findOne({
+      signalement: req.params.signalementId,
+    }).populate({
+      path:   'signalement',
+      select: 'description statut priorite localisation photo',
+    });
 
-    if (!analyse) {
+    if (!analyse)
       return res.status(404).json({ message: "Analyse non trouvée pour ce signalement" });
-    }
 
     res.status(200).json({ data: analyse });
   } catch (error) {
@@ -261,31 +287,20 @@ exports.getAnalyseBySignalement = async (req, res) => {
 
 /* ── getAllAnalyses() — Admin dashboard ── */
 
-/**
- * [FIX] Filtre par municipalityId via les signalements liés
- * Ancienne version : AnalyseIA.find() — retournait TOUT sans filtre
- * Nouvelle version : récupère d'abord les signalements de la municipalité
- *                    puis filtre les analyses correspondantes
- */
 exports.getAllAnalyses = async (req, res) => {
   try {
-    // Hard block — jamais de fallback sans municipalityId
     if (!req.user?.municipalityId) {
       return res.status(403).json({
         message: "Accès refusé : municipalité non définie",
       });
     }
 
-    console.log("[ANALYSES] Fetching for municipality:", req.user.municipalityId);
-
-    // Étape 1 : récupérer les IDs des signalements de cette municipalité
     const signalements = await Signalement.find({
       municipalityId: req.user.municipalityId,
     }).select('_id');
 
     const signalementIds = signalements.map(s => s._id);
 
-    // Étape 2 : récupérer uniquement les analyses liées à ces signalements
     const analyses = await AnalyseIA.find({
       signalement: { $in: signalementIds },
     })
@@ -294,8 +309,6 @@ exports.getAllAnalyses = async (req, res) => {
         select: 'description statut priorite localisation',
       })
       .sort({ dateAnalyse: -1 });
-
-    console.log(`[ANALYSES] Found ${analyses.length} analyses for municipality ${req.user.municipalityId}`);
 
     res.status(200).json({ data: analyses });
   } catch (error) {
@@ -308,15 +321,12 @@ exports.getAllAnalyses = async (req, res) => {
 exports.deleteAnalyse = async (req, res) => {
   try {
     const analyse = await AnalyseIA.findById(req.params.id);
-    if (!analyse) {
+    if (!analyse)
       return res.status(404).json({ message: "Analyse non trouvée" });
-    }
 
-    await Signalement.findByIdAndUpdate(analyse.signalement, {
-      analyseIA: null,
-    });
-
+    await Signalement.findByIdAndUpdate(analyse.signalement, { analyseIA: null });
     await AnalyseIA.findByIdAndDelete(req.params.id);
+
     res.status(200).json({ message: "Analyse supprimée avec succès" });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -1,81 +1,124 @@
-/**
- * @file visionService.js
- * @description Service d'analyse d'images par intelligence artificielle visuelle.
- * @responsibility Envoyer une image encodée en base64 à l'API Google Cloud Vision
- *                 et retourner les labels détectés dans un format exploitable
- *                 par le moteur de classification aiEngine.js.
- * @architecture Situé dans services/, il constitue la première étape du pipeline IA :
- *               visionService (détection) → aiEngine (classification + priorité)
- *               → analyseAI.controller (persistance + réponse API).
- * @fonctionnalité Appel HTTP à Google Cloud Vision API (LABEL_DETECTION),
- *                 normalisation des résultats, gestion du timeout et des erreurs.
- */
-
 const axios = require("axios");
 
 /**
- * Analyse une image via l'API Google Cloud Vision et retourne les labels détectés.
- * Utilise la fonctionnalité LABEL_DETECTION pour identifier les objets,
- * scènes et concepts présents dans l'image du signalement.
+ * Strict urban-only keywords.
+ * Generic words like "furniture", "wall", "building", "outdoor",
+ * "wire", "plastic", "bottle" are intentionally excluded —
+ * they match desks, faces, food, and other irrelevant images.
+ */
+const URBAN_KEYWORDS = [
+  // Road / voirie — outdoor road infrastructure only
+  "road", "street", "highway", "pothole", "asphalt", "pavement",
+  "tarmac", "sidewalk", "curb", "footpath", "road surface",
+  "road damage", "broken road", "road crack", "road hole",
+  "route", "trottoir", "chaussee", "asphalte", "nid de poule",
+
+  // Waste / propreté — outdoor waste only
+  "waste", "garbage", "trash", "litter", "rubbish",
+  "dump", "landfill", "sewage", "refuse",
+  "overflowing bin", "street waste", "littering", "dumping",
+  "dechet", "poubelle", "ordure",
+
+  // Lighting — street infrastructure only
+  "street light", "street lamp", "lamp post", "light pole",
+  "broken light", "unlit street", "dark street",
+  "lampadaire", "eclairage public",
+
+  // Infrastructure — outdoor/public only
+  "manhole", "storm drain", "drainage",
+  "graffiti", "vandalism", "broken sidewalk", "cracked pavement",
+  "road sign", "traffic sign", "guardrail",
+  "broken fence", "collapsed wall", "sinkhole",
+
+  // Danger — outdoor emergency situations only
+  "flood", "flooding", "inondation",
+  "fire", "incendie",
+  "collapsed", "effondrement",
+  "fallen tree", "blocked road", "road hazard",
+  "exposed wire", "broken pipe",
+
+  // Outdoor urban scene — strict, no generic words
+  "urban street", "public road", "city street",
+  "neighbourhood", "neighborhood",
+];
+
+/**
+ * Checks if Vision API labels contain at least one urban keyword.
+ * Only considers labels with confidence >= 0.60 to avoid
+ * low-confidence false positives.
  *
- * @param {string} base64Image - Image encodée en base64 (envoyée par le client mobile)
- * @returns {Array} Liste de labels normalisés : [{ label: string, confidence: number }]
- *                  Retourne un tableau vide si aucun label n'est détecté.
- * @throws {Error} Si la clé API Google Vision n'est pas définie dans le fichier .env
+ * [FIX] Only checks label.includes(keyword) — NEVER keyword.includes(label)
+ * The previous bug: keyword.includes(label) caused:
+ *   "road surface".includes("face") → true  (face photo accepted as voirie)
+ *   "neighbourhood".includes("hood") → true (random match)
+ * The fix: the LABEL must contain the keyword, not the other way around.
+ *
+ * @param {Array} labels - [{ label: string, confidence: number }]
+ * @returns {{ relevant: boolean, matchedLabel: string|null }}
+ */
+function checkImageRelevance(labels) {
+  const confidentLabels = labels.filter(l => l.confidence >= 0.60);
+
+  console.log("[VisionService] Checking relevance for labels:",
+    confidentLabels.map(l => `${l.label}(${l.confidence})`));
+
+  for (const { label } of confidentLabels) {
+    for (const keyword of URBAN_KEYWORDS) {
+      // [FIX] label must contain the keyword — never check keyword.includes(label)
+      if (label === keyword || label.includes(keyword)) {
+        console.log(`[VisionService] Urban match: "${label}" contains keyword "${keyword}"`);
+        return { relevant: true, matchedLabel: label };
+      }
+    }
+  }
+
+  console.log("[VisionService] No urban match — image rejected");
+  return { relevant: false, matchedLabel: null };
+}
+
+/**
+ * Analyses an image via Google Cloud Vision API.
+ * Returns normalized labels: [{ label: string, confidence: number }]
+ *
+ * @param {string} base64Image - Image encoded in base64
+ * @returns {Array} [{ label: string, confidence: number }]
  */
 async function analyzeImage(base64Image) {
-
-  /* ── Vérification de la clé API ──
-     La clé est obligatoire — l'absence de GOOGLE_VISION_API_KEY bloque immédiatement
-     l'exécution pour éviter un appel HTTP voué à l'échec */
   const apiKey = process.env.GOOGLE_VISION_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_VISION_API_KEY is not set in .env");
 
   console.log("[VisionService] Sending image to Google Cloud Vision API...");
 
-  /* ── Appel à l'API Google Cloud Vision ──
-     Envoi de l'image en base64 avec la fonctionnalité LABEL_DETECTION.
-     maxResults: 10 — on récupère les 10 labels les plus pertinents détectés.
-     timeout: 15000ms — abandon de la requête après 15 secondes sans réponse. */
   const response = await axios.post(
     `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
     {
       requests: [
         {
-          image: { content: base64Image }, // Image transmise en base64
-          features: [
-            { type: "LABEL_DETECTION", maxResults: 10 } // Type d'analyse demandé à l'API
-          ]
-        }
-      ]
+          image:    { content: base64Image },
+          features: [{ type: "LABEL_DETECTION", maxResults: 10 }],
+        },
+      ],
     },
     {
       headers: { "Content-Type": "application/json" },
-      timeout: 15000 // Timeout de sécurité pour éviter les requêtes bloquées
+      timeout: 15000,
     }
   );
 
-  /* ── Extraction des annotations retournées par l'API ──
-     Accès sécurisé via l'opérateur ?. — retourne un tableau vide si la réponse est vide */
   const annotations = response.data?.responses?.[0]?.labelAnnotations || [];
 
-  /* Aucun label détecté dans l'image — retour d'un tableau vide sans erreur */
   if (annotations.length === 0) {
     console.warn("[VisionService] No labels returned from Vision API");
     return [];
   }
 
-  /* ── Normalisation des résultats au format attendu par aiEngine.js ──
-     Transformation de la réponse brute Google Vision vers { label, confidence } :
-     - description : texte du label converti en minuscules pour la comparaison de mots-clés
-     - score       : confiance arrondie à 4 décimales pour la cohérence avec aiEngine */
   const labels = annotations.map(item => ({
-    label:      item.description.toLowerCase(),              // Ex: "pothole", "garbage", "road"
-    confidence: Math.round(item.score * 10000) / 10000      // Ex: 0.9423, 0.7851
+    label:      item.description.toLowerCase(),
+    confidence: Math.round(item.score * 10000) / 10000,
   }));
 
   console.log("[VisionService] Labels received:", labels);
   return labels;
 }
 
-module.exports = { analyzeImage };
+module.exports = { analyzeImage, checkImageRelevance };

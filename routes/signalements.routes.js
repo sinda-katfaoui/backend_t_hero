@@ -1,64 +1,53 @@
-/**
- * ============================================================
- * FICHIER  : signalements.routes.js
- * [FIXED]  : requireAuth ajouté sur TOUTES les routes
- *            Sans ça, req.user est undefined et le filtre
- *            municipalityId ne fonctionne pas
- * ============================================================
- */
-
-const express                  = require('express');
-const router                   = express.Router();
-const upload                   = require('../middlewares/uploadfile');
-const logMiddleware            = require('../middlewares/LogMiddleware');
-const { requireAuth }          = require('../middlewares/authMiddleware');
-const signalementController    = require('../controllers/signalement.controller');
+const express               = require('express');
+const router                = express.Router();
+const upload                = require('../middlewares/uploadfile');
+const logMiddleware         = require('../middlewares/LogMiddleware');
+const { requireAuth }       = require('../middlewares/authMiddleware');
+const { validateSignalement } = require('../middlewares/validateSignalement');
+const signalementController = require('../controllers/signalement.controller');
 
 router.use(logMiddleware);
 
-/* ── Citoyen: createSignalement ── */
-// requireAuth était déjà là — municipalityId vient de req.user ✅
+/**
+ * Pipeline CreateSignalement :
+ * requireAuth → upload.single (multer) → validateSignalement → controller
+ *
+ * ORDER MATTERS:
+ * - upload must run before validateSignalement so req.file is available
+ * - validateSignalement runs before controller so invalid data never reaches DB
+ */
 router.post('/CreateSignalement',
   requireAuth,
   upload.single('photo'),
+  validateSignalement,
   signalementController.createSignalement
 );
 
-/* ── GetAllSignalements ── */
-// [FIX] requireAuth ajouté — sans ça req.user = undefined
-// donc getAllSignalements ne peut pas filtrer par municipalityId
 router.get('/GetAllSignalements',
   requireAuth,
   signalementController.getAllSignalements
 );
 
-/* ── GetSignalementById ── */
-// [FIX] requireAuth ajouté — findOne({_id, municipalityId}) nécessite req.user
 router.get('/GetSignalementById/:id',
   requireAuth,
   signalementController.getSignalementById
 );
 
-/* ── GetSignalementsByCitoyen ── */
-// [FIX] requireAuth ajouté — citoyen doit être authentifié
 router.get('/GetSignalementsByCitoyen/:citoyenId',
   requireAuth,
   signalementController.getSignalementsByCitoyen
 );
 
-/* ── AgentMunicipal: traiterSignalement ── */
 router.put('/TraiterSignalement/:id',
   requireAuth,
   signalementController.traiterSignalement
 );
 
-/* ── AgentMunicipal: changerStatut ── */
 router.put('/ChangerStatut/:id',
   requireAuth,
   signalementController.changerStatutSignalement
 );
 
-/* ── Delete ── */
 router.delete('/DeleteSignalement/:id',
   requireAuth,
   signalementController.deleteSignalement

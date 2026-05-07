@@ -1,47 +1,124 @@
 const Signalement  = require('../models/signalement.model');
 const Notification = require('../models/notification.model');
+const AnalyseIA    = require('../models/analyseAI.model');
+const { analyzeImage }  = require('../services/visionService');
+const { analyzeReport } = require('../services/aiEngine');
 
+const CATEGORY_MAP = {
+  road:           'VOIRIE',
+  waste:          'PROPRETE',
+  lighting:       'ECLAIRAGE',
+  danger:         'VOIRIE',
+  infrastructure: 'ESPACES_VERTS',
+  other:          'AUTRE',
+};
+
+const PRIORITY_MAP = {
+  critical: 'ELEVEE',
+  high:     'ELEVEE',
+  medium:   'MOYENNE',
+  low:      'FAIBLE',
+};
+
+/**
+ * createSignalement
+ * [FIX] No longer re-runs Vision API if Flutter already sent AI result from preview.
+ * Vision API is non-deterministic — running it twice gives different priority results.
+ * Flutter sends priorite + categorie from the preview call → backend trusts them directly.
+ */
 exports.createSignalement = async (req, res) => {
   try {
-    const { description, localisation, priorite, categorie, citoyen } = req.body;
+    const { description, localisation, categorie, citoyen, priorite } = req.body;
 
-    if (!description || !localisation || !citoyen) {
-      return res.status(400).json({
-        message: "description, localisation et citoyen sont requis",
-      });
+    let finalCategorie = categorie;
+    let finalPriorite  = priorite || 'FAIBLE';
+    let analyseDoc     = null;
+
+    // [FIX] If Flutter already has AI result from preview, trust it — don't re-analyze
+    // priorite will be ELEVEE/MOYENNE/FAIBLE if AI ran during preview
+    const hasAiFromPreview = priorite && ['ELEVEE', 'MOYENNE', 'FAIBLE'].includes(priorite);
+
+    if (!hasAiFromPreview) {
+      // No preview AI result available — run Vision API now as fallback
+      try {
+        const fs        = require('fs');
+        const path      = require('path');
+        const imgPath   = path.join(__dirname, '../public/uploads', req.file.filename);
+        const imgBuffer = fs.readFileSync(imgPath);
+        const base64Img = imgBuffer.toString('base64');
+
+        const labels   = await analyzeImage(base64Img);
+        const aiResult = analyzeReport(labels, 0, new Date());
+
+        finalCategorie = CATEGORY_MAP[aiResult.category] || categorie || 'AUTRE';
+        finalPriorite  = PRIORITY_MAP[aiResult.priority]  || 'FAIBLE';
+
+        analyseDoc = await AnalyseIA.create({
+          scoreConfiance:    aiResult.confidence,
+          resultatCategorie: finalCategorie,
+          resultatPriorite:  finalPriorite,
+          analyseImage:      req.file.filename,
+          analyseTexte:      JSON.stringify({
+            labels:   labels.slice(0, 5),
+            score:    aiResult.score,
+            isNight:  aiResult.isNight,
+            category: aiResult.category,
+            priority: aiResult.priority,
+          }),
+        });
+
+        console.log(`[createSignalement] AI ran at submit: ${finalPriorite} / ${finalCategorie}`);
+      } catch (aiError) {
+        console.error('[createSignalement] AI pipeline error:', aiError.message);
+      }
+    } else {
+      // Use the priority and category determined during preview — consistent result
+      console.log(`[createSignalement] Using preview AI result: ${finalPriorite} / ${finalCategorie}`);
     }
 
     const signalement = new Signalement({
-      description,
+      description:    description.trim(),
       localisation,
-      priorite,
-      categorie,
+      priorite:       finalPriorite,
+      categorie:      finalCategorie,
       citoyen,
-      photo: req.file ? req.file.filename : "",
-      // municipalityId always from token — never trust the request body
-      municipalityId: req.user?.municipalityId || null,
+      photo:          req.file.filename,
+      municipalityId: req.user.municipalityId,
+      analyseIA:      analyseDoc ? analyseDoc._id : null,
     });
 
     await signalement.save();
-    res.status(201).json({
+
+    if (analyseDoc) {
+      analyseDoc.signalement = signalement._id;
+      await analyseDoc.save();
+    }
+
+    return res.status(201).json({
+      success: true,
       message: "Signalement créé avec succès",
       data:    signalement,
+      ai:      analyseDoc ? {
+        category:   analyseDoc.resultatCategorie,
+        priorite:   analyseDoc.resultatPriorite,
+        confidence: analyseDoc.scoreConfiance,
+      } : null,
     });
+
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[createSignalement] Fatal error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
   }
 };
 
 exports.getAllSignalements = async (req, res) => {
   try {
-    // [FIX] Hard block — never fall back to find({})
     if (!req.user?.municipalityId) {
       return res.status(403).json({
-        message: "Accès refusé : municipalité non définie pour cet utilisateur",
+        success: false,
+        message: "Accès refusé : municipalité non définie",
       });
     }
-
-    console.log("[SIGNALEMENT] Fetching for municipality:", req.user.municipalityId);
 
     const signalements = await Signalement.find({
       municipalityId: req.user.municipalityId,
@@ -54,15 +131,15 @@ exports.getAllSignalements = async (req, res) => {
 
     res.status(200).json({ data: signalements });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
 exports.getSignalementById = async (req, res) => {
   try {
-    // [FIX] Scope lookup to municipalityId — prevents fetching another municipality's data by ID
     if (!req.user?.municipalityId) {
       return res.status(403).json({
+        success: false,
         message: "Accès refusé : municipalité non définie",
       });
     }
@@ -78,16 +155,14 @@ exports.getSignalementById = async (req, res) => {
       .populate('notifications');
 
     if (!signalement)
-      return res.status(404).json({ message: "Signalement non trouvé" });
+      return res.status(404).json({ success: false, message: "Signalement non trouvé" });
 
     res.status(200).json({ data: signalement });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
-// Citizens fetch their own signalements — no municipalityId filter needed here
-// The citoyenId param already scopes the query to one user
 exports.getSignalementsByCitoyen = async (req, res) => {
   try {
     const signalements = await Signalement.find({ citoyen: req.params.citoyenId })
@@ -98,7 +173,7 @@ exports.getSignalementsByCitoyen = async (req, res) => {
 
     res.status(200).json({ data: signalements });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -106,12 +181,10 @@ exports.traiterSignalement = async (req, res) => {
   try {
     const { agent } = req.body;
     if (!agent)
-      return res.status(400).json({ message: "L'id de l'agent est requis" });
+      return res.status(400).json({ success: false, message: "L'id de l'agent est requis" });
 
-    // [FIX] Scoped findOne — agent cannot act on another municipality's signalement
-    if (!req.user?.municipalityId) {
-      return res.status(403).json({ message: "Accès refusé : municipalité non définie" });
-    }
+    if (!req.user?.municipalityId)
+      return res.status(403).json({ success: false, message: "Accès refusé : municipalité non définie" });
 
     const signalement = await Signalement.findOne({
       _id:            req.params.id,
@@ -119,7 +192,7 @@ exports.traiterSignalement = async (req, res) => {
     });
 
     if (!signalement)
-      return res.status(404).json({ message: "Signalement non trouvé" });
+      return res.status(404).json({ success: false, message: "Signalement non trouvé" });
 
     signalement.agent  = agent;
     signalement.statut = 'EN_COURS';
@@ -142,12 +215,9 @@ exports.traiterSignalement = async (req, res) => {
       console.error('Notif error:', e.message);
     }
 
-    res.status(200).json({
-      message: "Signalement pris en charge",
-      data:    signalement,
-    });
+    res.status(200).json({ success: true, message: "Signalement pris en charge", data: signalement });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -158,14 +228,13 @@ exports.changerStatutSignalement = async (req, res) => {
 
     if (!statut || !allowedStatuts.includes(statut)) {
       return res.status(400).json({
+        success: false,
         message: `Statut invalide. Valeurs acceptées: ${allowedStatuts.join(', ')}`,
       });
     }
 
-    // [FIX] Scoped findOne
-    if (!req.user?.municipalityId) {
-      return res.status(403).json({ message: "Accès refusé : municipalité non définie" });
-    }
+    if (!req.user?.municipalityId)
+      return res.status(403).json({ success: false, message: "Accès refusé : municipalité non définie" });
 
     const signalement = await Signalement.findOne({
       _id:            req.params.id,
@@ -173,7 +242,7 @@ exports.changerStatutSignalement = async (req, res) => {
     });
 
     if (!signalement)
-      return res.status(404).json({ message: "Signalement non trouvé" });
+      return res.status(404).json({ success: false, message: "Signalement non trouvé" });
 
     signalement.statut = statut;
     await signalement.save();
@@ -197,8 +266,7 @@ exports.changerStatutSignalement = async (req, res) => {
       }
 
       await new Notification({
-        message,
-        type,
+        message, type,
         destinataire: citoyenId,
         signalement:  signalement._id,
         lu:           false,
@@ -207,21 +275,16 @@ exports.changerStatutSignalement = async (req, res) => {
       console.error('Notif error:', e.message);
     }
 
-    res.status(200).json({
-      message: "Statut mis à jour avec succès",
-      data:    signalement,
-    });
+    res.status(200).json({ success: true, message: "Statut mis à jour avec succès", data: signalement });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
 exports.deleteSignalement = async (req, res) => {
   try {
-    // [FIX] Scoped findOne — cannot delete another municipality's signalement
-    if (!req.user?.municipalityId) {
-      return res.status(403).json({ message: "Accès refusé : municipalité non définie" });
-    }
+    if (!req.user?.municipalityId)
+      return res.status(403).json({ success: false, message: "Accès refusé : municipalité non définie" });
 
     const signalement = await Signalement.findOne({
       _id:            req.params.id,
@@ -229,11 +292,11 @@ exports.deleteSignalement = async (req, res) => {
     });
 
     if (!signalement)
-      return res.status(404).json({ message: "Signalement non trouvé" });
+      return res.status(404).json({ success: false, message: "Signalement non trouvé" });
 
     await Signalement.findByIdAndDelete(req.params.id);
-    res.status(200).json({ message: "Signalement supprimé avec succès" });
+    res.status(200).json({ success: true, message: "Signalement supprimé avec succès" });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
