@@ -20,12 +20,6 @@ const PRIORITY_MAP = {
   low:      'FAIBLE',
 };
 
-/**
- * createSignalement
- * [FIX] No longer re-runs Vision API if Flutter already sent AI result from preview.
- * Vision API is non-deterministic — running it twice gives different priority results.
- * Flutter sends priorite + categorie from the preview call → backend trusts them directly.
- */
 exports.createSignalement = async (req, res) => {
   try {
     const { description, localisation, categorie, citoyen, priorite } = req.body;
@@ -34,46 +28,44 @@ exports.createSignalement = async (req, res) => {
     let finalPriorite  = priorite || 'FAIBLE';
     let analyseDoc     = null;
 
-    // [FIX] If Flutter already has AI result from preview, trust it — don't re-analyze
-    // priorite will be ELEVEE/MOYENNE/FAIBLE if AI ran during preview
     const hasAiFromPreview = priorite && ['ELEVEE', 'MOYENNE', 'FAIBLE'].includes(priorite);
 
-    if (!hasAiFromPreview) {
-      // No preview AI result available — run Vision API now as fallback
-      try {
-        const fs        = require('fs');
-        const path      = require('path');
-        const imgPath   = path.join(__dirname, '../public/uploads', req.file.filename);
-        const imgBuffer = fs.readFileSync(imgPath);
-        const base64Img = imgBuffer.toString('base64');
+    // [FIX] Always run Vision API and save AnalyseIA document
+    // Whether preview AI ran or not — admin and agent need the AI score visible
+    try {
+      const fs        = require('fs');
+      const path      = require('path');
+      const imgPath   = path.join(__dirname, '../public/images', req.file.filename);
+      const imgBuffer = fs.readFileSync(imgPath);
+      const base64Img = imgBuffer.toString('base64');
 
-        const labels   = await analyzeImage(base64Img);
-        const aiResult = analyzeReport(labels, 0, new Date());
+      const labels   = await analyzeImage(base64Img);
+      const aiResult = analyzeReport(labels, 0, new Date());
 
+      if (!hasAiFromPreview) {
+        // No preview result — use Vision API result for priority and category
         finalCategorie = CATEGORY_MAP[aiResult.category] || categorie || 'AUTRE';
         finalPriorite  = PRIORITY_MAP[aiResult.priority]  || 'FAIBLE';
-
-        analyseDoc = await AnalyseIA.create({
-          scoreConfiance:    aiResult.confidence,
-          resultatCategorie: finalCategorie,
-          resultatPriorite:  finalPriorite,
-          analyseImage:      req.file.filename,
-          analyseTexte:      JSON.stringify({
-            labels:   labels.slice(0, 5),
-            score:    aiResult.score,
-            isNight:  aiResult.isNight,
-            category: aiResult.category,
-            priority: aiResult.priority,
-          }),
-        });
-
-        console.log(`[createSignalement] AI ran at submit: ${finalPriorite} / ${finalCategorie}`);
-      } catch (aiError) {
-        console.error('[createSignalement] AI pipeline error:', aiError.message);
       }
-    } else {
-      // Use the priority and category determined during preview — consistent result
-      console.log(`[createSignalement] Using preview AI result: ${finalPriorite} / ${finalCategorie}`);
+      // If hasAiFromPreview → keep Flutter's priority/category, but still save AI score
+
+      analyseDoc = await AnalyseIA.create({
+        scoreConfiance:    aiResult.confidence,
+        resultatCategorie: CATEGORY_MAP[aiResult.category] || finalCategorie || 'AUTRE',
+        resultatPriorite:  finalPriorite,
+        analyseImage:      req.file.filename,
+        analyseTexte:      JSON.stringify({
+          labels:   labels.slice(0, 5),
+          score:    aiResult.score,
+          isNight:  aiResult.isNight,
+          category: aiResult.category,
+          priority: aiResult.priority,
+        }),
+      });
+
+      console.log(`[createSignalement] AnalyseIA saved | score: ${aiResult.confidence} | priorite: ${finalPriorite}`);
+    } catch (aiError) {
+      console.error('[createSignalement] AI pipeline error:', aiError.message);
     }
 
     const signalement = new Signalement({
@@ -167,7 +159,7 @@ exports.getSignalementsByCitoyen = async (req, res) => {
   try {
     const signalements = await Signalement.find({ citoyen: req.params.citoyenId })
       .populate('categorie')
-      .populate('agent',         '-motDePasse')
+      .populate('agent',    '-motDePasse')
       .populate('analyseIA')
       .populate('notifications');
 
@@ -245,6 +237,12 @@ exports.changerStatutSignalement = async (req, res) => {
       return res.status(404).json({ success: false, message: "Signalement non trouvé" });
 
     signalement.statut = statut;
+
+    if (statut === 'RESOLU' && req.file) {
+      signalement.photoResolution = req.file.filename;
+      console.log(`[SIGNALEMENT] Resolution photo saved: ${req.file.filename}`);
+    }
+
     await signalement.save();
 
     try {

@@ -1,21 +1,13 @@
-const express               = require('express');
-const router                = express.Router();
-const upload                = require('../middlewares/uploadfile');
-const logMiddleware         = require('../middlewares/LogMiddleware');
-const { requireAuth }       = require('../middlewares/authMiddleware');
+const express                 = require('express');
+const router                  = express.Router();
+const upload                  = require('../middlewares/uploadfile');
+const logMiddleware           = require('../middlewares/LogMiddleware');
+const { requireAuth }         = require('../middlewares/authMiddleware');
 const { validateSignalement } = require('../middlewares/validateSignalement');
-const signalementController = require('../controllers/signalement.controller');
+const signalementController   = require('../controllers/signalement.controller');
 
 router.use(logMiddleware);
 
-/**
- * Pipeline CreateSignalement :
- * requireAuth → upload.single (multer) → validateSignalement → controller
- *
- * ORDER MATTERS:
- * - upload must run before validateSignalement so req.file is available
- * - validateSignalement runs before controller so invalid data never reaches DB
- */
 router.post('/CreateSignalement',
   requireAuth,
   upload.single('photo'),
@@ -43,8 +35,10 @@ router.put('/TraiterSignalement/:id',
   signalementController.traiterSignalement
 );
 
+// [ADDED] upload.single('photoResolution') — agent uploads resolution photo
 router.put('/ChangerStatut/:id',
   requireAuth,
+  upload.single('photoResolution'),
   signalementController.changerStatutSignalement
 );
 
